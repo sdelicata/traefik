@@ -7,7 +7,6 @@ import (
 	"regexp"
 
 	"github.com/mitchellh/copystructure"
-	"github.com/traefik/traefik/v2/pkg/config/dynamic"
 	"github.com/traefik/traefik/v2/pkg/tls"
 	"mvdan.cc/xurls/v2"
 )
@@ -72,11 +71,6 @@ func doOnJSON(input string) string {
 }
 
 func doOnStruct(field reflect.Value, tag string, redactByDefault bool) error {
-	if field.Type().AssignableTo(reflect.TypeOf(dynamic.PluginConf{})) {
-		resetPlugin(field)
-		return nil
-	}
-
 	switch field.Kind() {
 	case reflect.Ptr:
 		if !field.IsNil() {
@@ -196,13 +190,6 @@ func reset(field reflect.Value, name string) error {
 		field.Set(reflect.Zero(field.Type()))
 	}
 	return nil
-}
-
-// resetPlugin resets the plugin configuration so it keep the plugin name but not its configuration.
-func resetPlugin(field reflect.Value) {
-	for _, key := range field.MapKeys() {
-		field.SetMapIndex(key, reflect.ValueOf(struct{}{}))
-	}
 }
 
 // isExported return true is a struct field is exported, else false.

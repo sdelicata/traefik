@@ -29,34 +29,32 @@ const (
 	pluginManifest = ".traefik.yml"
 )
 
-const pilotURL = "https://plugin.pilot.traefik.io/public/"
+const pluginURL = "https://plugins.traefik.io/public/"
 
 const (
-	hashHeader  = "X-Plugin-Hash"
-	tokenHeader = "X-Token"
+	hashHeader = "X-Plugin-Hash"
 )
 
-// ClientOptions the options of a Traefik Pilot client.
+// ClientOptions the options of a Traefik Plugin client.
 type ClientOptions struct {
 	Output string
 	Token  string
 }
 
-// Client a Traefik Pilot client.
+// Client a Traefik Plugin client.
 type Client struct {
 	HTTPClient *http.Client
 	baseURL    *url.URL
 
-	token     string
 	archives  string
 	stateFile string
 	goPath    string
 	sources   string
 }
 
-// NewClient creates a new Traefik Pilot client.
+// NewClient creates a new Traefik Plugin client.
 func NewClient(opts ClientOptions) (*Client, error) {
-	baseURL, err := url.Parse(pilotURL)
+	baseURL, err := url.Parse(pluginURL)
 	if err != nil {
 		return nil, err
 	}
@@ -87,8 +85,6 @@ func NewClient(opts ClientOptions) (*Client, error) {
 
 		goPath:  goPath,
 		sources: filepath.Join(goPath, goPathSrc),
-
-		token: opts.Token,
 	}, nil
 }
 
@@ -153,10 +149,6 @@ func (c *Client) Download(ctx context.Context, pName, pVersion string) (string, 
 		req.Header.Set(hashHeader, hash)
 	}
 
-	if c.token != "" {
-		req.Header.Set(tokenHeader, c.token)
-	}
-
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("failed to call service: %w", err)
@@ -214,10 +206,6 @@ func (c *Client) Check(ctx context.Context, pName, pVersion, hash string) error 
 
 	if hash != "" {
 		req.Header.Set(hashHeader, hash)
-	}
-
-	if c.token != "" {
-		req.Header.Set(tokenHeader, c.token)
 	}
 
 	resp, err := c.HTTPClient.Do(req)
