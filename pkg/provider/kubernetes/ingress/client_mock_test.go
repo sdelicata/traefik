@@ -9,6 +9,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	networkingv1beta1 "k8s.io/api/networking/v1beta1"
+	apimachineryruntime "k8s.io/apimachinery/pkg/runtime"
 )
 
 var _ Client = (*clientMock)(nil)
@@ -134,4 +135,8 @@ func (c clientMock) WatchAll(namespaces []string, stopCh <-chan struct{}) (<-cha
 
 func (c clientMock) UpdateIngressStatus(_ *networkingv1.Ingress, _ []corev1.LoadBalancerIngress) error {
 	return c.apiIngressStatusError
+}
+
+func (c clientMock) CreateEvent(object apimachineryruntime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+	//FIXME implement me
 }

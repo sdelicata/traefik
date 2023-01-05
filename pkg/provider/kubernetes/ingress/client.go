@@ -19,11 +19,13 @@ import (
 	kubeerror "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	apimachineryruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/record"
 )
 
 const (
@@ -47,6 +49,7 @@ type Client interface {
 	GetEndpoints(namespace, name string) (*corev1.Endpoints, bool, error)
 	UpdateIngressStatus(ing *networkingv1.Ingress, ingStatus []corev1.LoadBalancerIngress) error
 	GetServerVersion() *version.Version
+	CreateEvent(object apimachineryruntime.Object, eventtype, reason, messageFmt string, args ...interface{})
 }
 
 type clientWrapper struct {
@@ -60,6 +63,7 @@ type clientWrapper struct {
 	disableIngressClassInformer bool
 	watchedNamespaces           []string
 	serverVersion               *version.Version
+	eventRecorder               record.EventRecorder
 }
 
 // newInClusterClient returns a new Provider client that is expected to run
@@ -577,4 +581,9 @@ func supportsNetworkingV1Ingress(serverVersion *version.Version) bool {
 	ingressNetworkingVersion := version.Must(version.NewVersion("1.19"))
 
 	return serverVersion.GreaterThanOrEqual(ingressNetworkingVersion)
+}
+
+func (c *clientWrapper) CreateEvent(object apimachineryruntime.Object, eventtype, reason, messageFmt string, args ...interface{}) {
+	log.Debug().Str("reason", reason).Msg("Creating Event")
+	c.eventRecorder.Eventf(object, eventtype, reason, messageFmt, args...)
 }

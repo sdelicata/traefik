@@ -27,6 +27,9 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/client-go/kubernetes/scheme"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	"k8s.io/client-go/tools/record"
 )
 
 const (
@@ -93,6 +96,15 @@ func (p *Provider) newK8sClient(ctx context.Context) (*clientWrapper, error) {
 
 	cl.ingressLabelSelector = p.LabelSelector
 	cl.disableIngressClassInformer = p.DisableIngressClassLookup
+
+	eventBroadcaster := record.NewBroadcaster()
+	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{
+		Interface: cl.clientset.CoreV1().Events(""),
+	})
+	cl.eventRecorder = eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{
+		Component: traefikDefaultIngressClassController,
+	})
+
 	return cl, nil
 }
 
@@ -224,17 +236,20 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 		rtConfig, err := parseRouterConfig(ingress.Annotations)
 		if err != nil {
 			logger.Error().Err(err).Msg("Failed to parse annotations")
+			client.CreateEvent(ingress, corev1.EventTypeWarning, "SynchronizationFailed", "Failed to parse annotations: %v", err)
 			continue
 		}
 
 		err = getCertificates(ctx, ingress, client, certConfigs)
 		if err != nil {
 			logger.Error().Err(err).Msg("Error configuring TLS")
+			client.CreateEvent(ingress, corev1.EventTypeWarning, "SynchronizationFailed", "Error configuring TLS: %v", err)
 		}
 
 		if len(ingress.Spec.Rules) == 0 && ingress.Spec.DefaultBackend != nil {
 			if _, ok := conf.HTTP.Services["default-backend"]; ok {
-				logger.Error().Msg("The default backend already exists.")
+				logger.Error().Msg("The default backend already exists")
+				client.CreateEvent(ingress, corev1.EventTypeWarning, "SynchronizationFailed", "The default backend already exists")
 				continue
 			}
 
@@ -245,6 +260,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 					Str("servicePort", ingress.Spec.DefaultBackend.Service.Port.String()).
 					Err(err).
 					Msg("Cannot create service")
+				client.CreateEvent(ingress, corev1.EventTypeWarning, "SynchronizationFailed", "Missing service %q: %v", ingress.Spec.DefaultBackend.Service.Name, err)
 				continue
 			}
 
@@ -253,6 +269,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 					Str("serviceName", ingress.Spec.DefaultBackend.Service.Name).
 					Str("servicePort", ingress.Spec.DefaultBackend.Service.Port.String()).
 					Msg("Skipping service: no endpoints found")
+				client.CreateEvent(ingress, corev1.EventTypeWarning, "SynchronizationFailed", "Service %q has no endpoint", ingress.Spec.DefaultBackend.Service.Name)
 				continue
 			}
 
@@ -291,6 +308,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 						Str("servicePort", pa.Backend.Service.Port.String()).
 						Err(err).
 						Msg("Cannot create service")
+					client.CreateEvent(ingress, corev1.EventTypeWarning, "SynchronizationFailed", "Missing service %q: %v", pa.Backend.Service.Name, err)
 					continue
 				}
 
@@ -299,6 +317,7 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 						Str("serviceName", pa.Backend.Service.Name).
 						Str("servicePort", pa.Backend.Service.Port.String()).
 						Msg("Skipping service: no endpoints found")
+					client.CreateEvent(ingress, corev1.EventTypeWarning, "SynchronizationFailed", "Service %q has no endpoint", pa.Backend.Service.Name)
 					continue
 				}
 
@@ -333,6 +352,10 @@ func (p *Provider) loadConfigurationFromIngresses(ctx context.Context, client Cl
 
 				conf.HTTP.Routers[key] = router
 			}
+		}
+
+		if len(routers) > 0 {
+			client.CreateEvent(ingress, corev1.EventTypeNormal, "Synchronized", "Synchronized ingress %q", ingress.Name)
 		}
 	}
 
