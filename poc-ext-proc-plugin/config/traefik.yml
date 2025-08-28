@@ -1,0 +1,61 @@
+# Traefik static configuration for ext-proc POC
+
+# Global configuration
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+# API and Dashboard
+api:
+  dashboard: true
+  insecure: true  # For development only - disable in production
+  debug: true
+
+# Entry Points
+entryPoints:
+  web:
+    address: ":80"
+  websecure:
+    address: ":443"
+
+# Providers
+providers:
+  # Docker provider for service discovery
+  docker:
+    endpoint: "unix:///var/run/docker.sock"
+    exposedByDefault: false
+    watch: true
+    
+  # File provider for dynamic configuration
+  file:
+    filename: /etc/traefik/dynamic.yml
+    watch: true
+
+# Logging
+log:
+  level: DEBUG
+  filePath: "/var/log/traefik/traefik.log"
+
+# Access logs
+accessLog:
+  filePath: "/var/log/traefik/access.log"
+  format: json
+  fields:
+    headers:
+      defaultMode: keep
+      names:
+        X-Request-Header: keep
+        X-Response-Header: keep
+
+# Metrics (optional - for monitoring)
+metrics:
+  prometheus:
+    addEntryPointsLabels: true
+    addServicesLabels: true
+
+# Tracing (optional - for debugging)
+# tracing:
+#   jaeger:
+#     samplingType: const
+#     samplingParam: 1.0
+#     localAgentHostPort: "jaeger:14268"

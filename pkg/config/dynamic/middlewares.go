@@ -42,6 +42,7 @@ type Middleware struct {
 	Retry             *Retry             `json:"retry,omitempty" toml:"retry,omitempty" yaml:"retry,omitempty" export:"true"`
 	ContentType       *ContentType       `json:"contentType,omitempty" toml:"contentType,omitempty" yaml:"contentType,omitempty" label:"allowEmpty" file:"allowEmpty" kv:"allowEmpty" export:"true"`
 	GrpcWeb           *GrpcWeb           `json:"grpcWeb,omitempty" toml:"grpcWeb,omitempty" yaml:"grpcWeb,omitempty" export:"true"`
+	ExtProc           *ExtProc           `json:"extProc,omitempty" toml:"extProc,omitempty" yaml:"extProc,omitempty" export:"true"`
 
 	Plugin map[string]PluginConf `json:"plugin,omitempty" toml:"plugin,omitempty" yaml:"plugin,omitempty" export:"true"`
 
@@ -818,4 +819,58 @@ type URLRewrite struct {
 	Hostname   *string `json:"hostname,omitempty"`
 	Path       *string `json:"path,omitempty"`
 	PathPrefix *string `json:"pathPrefix,omitempty"`
+}
+
+// +k8s:deepcopy-gen=true
+
+// ExtProc holds the external processing middleware configuration.
+// This middleware enables external processing of HTTP requests and responses via gRPC.
+type ExtProc struct {
+	// GRPCServer is the address of the external processing gRPC server.
+	// Example: "ext-proc-server:9001"
+	GRPCServer string `json:"grpcServer" toml:"grpcServer" yaml:"grpcServer" export:"true"`
+
+	// Timeout specifies the timeout for gRPC requests to the external processor.
+	// Default: "5s"
+	Timeout *ptypes.Duration `json:"timeout,omitempty" toml:"timeout,omitempty" yaml:"timeout,omitempty" export:"true"`
+
+	// ProcessingMode configures which parts of the HTTP request/response to send for processing.
+	ProcessingMode *ProcessingMode `json:"processingMode,omitempty" toml:"processingMode,omitempty" yaml:"processingMode,omitempty" export:"true"`
+
+	// InsecureConn disables TLS for the gRPC connection (for development only).
+	// Default: false
+	InsecureConn bool `json:"insecureConn,omitempty" toml:"insecureConn,omitempty" yaml:"insecureConn,omitempty" export:"true"`
+
+	// MaxRecvMsgSize sets the maximum message size the client can receive.
+	// Default: 4MB
+	MaxRecvMsgSize int `json:"maxRecvMsgSize,omitempty" toml:"maxRecvMsgSize,omitempty" yaml:"maxRecvMsgSize,omitempty" export:"true"`
+
+	// MaxSendMsgSize sets the maximum message size the client can send.
+	// Default: 4MB
+	MaxSendMsgSize int `json:"maxSendMsgSize,omitempty" toml:"maxSendMsgSize,omitempty" yaml:"maxSendMsgSize,omitempty" export:"true"`
+}
+
+// +k8s:deepcopy-gen=true
+
+// ProcessingMode configures which parts of the HTTP request/response to process.
+type ProcessingMode struct {
+	// RequestHeadersMode controls processing of request headers.
+	// Values: "SKIP", "SEND", "STREAMED"
+	// Default: "SKIP"
+	RequestHeadersMode string `json:"requestHeadersMode,omitempty" toml:"requestHeadersMode,omitempty" yaml:"requestHeadersMode,omitempty" export:"true"`
+
+	// ResponseHeadersMode controls processing of response headers.
+	// Values: "SKIP", "SEND", "STREAMED"
+	// Default: "SKIP"
+	ResponseHeadersMode string `json:"responseHeadersMode,omitempty" toml:"responseHeadersMode,omitempty" yaml:"responseHeadersMode,omitempty" export:"true"`
+
+	// RequestBodyMode controls processing of request body.
+	// Values: "NONE", "STREAMED", "BUFFERED", "BUFFERED_PARTIAL"
+	// Default: "NONE"
+	RequestBodyMode string `json:"requestBodyMode,omitempty" toml:"requestBodyMode,omitempty" yaml:"requestBodyMode,omitempty" export:"true"`
+
+	// ResponseBodyMode controls processing of response body.
+	// Values: "NONE", "STREAMED", "BUFFERED", "BUFFERED_PARTIAL"
+	// Default: "NONE"
+	ResponseBodyMode string `json:"responseBodyMode,omitempty" toml:"responseBodyMode,omitempty" yaml:"responseBodyMode,omitempty" export:"true"`
 }

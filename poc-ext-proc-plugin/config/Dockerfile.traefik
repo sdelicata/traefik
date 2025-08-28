@@ -1,0 +1,56 @@
+# Multi-stage build for custom Traefik with ext-proc middleware
+FROM golang:1.24-alpine AS builder
+
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates tzdata
+
+WORKDIR /app
+
+# Copy go.mod and go.sum first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source code
+COPY . .
+
+# Build Traefik with ext-proc middleware included
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-s -w" \
+    -o traefik \
+    ./cmd/traefik
+
+# Final stage
+FROM alpine:latest
+
+# Install runtime dependencies
+RUN apk --no-cache add ca-certificates tzdata wget
+
+# Create non-root user and add to docker group for socket access
+RUN addgroup -g 1000 -S traefik && \
+    addgroup -g 998 -S docker && \
+    adduser -u 1000 -D -S -G traefik traefik && \
+    adduser traefik docker
+
+# Set working directory
+WORKDIR /
+
+# Copy binary from builder stage
+COPY --from=builder /app/traefik /usr/local/bin/traefik
+RUN chmod +x /usr/local/bin/traefik
+
+# Create directories for configs and logs
+RUN mkdir -p /etc/traefik /var/log/traefik && \
+    chown -R traefik:traefik /etc/traefik /var/log/traefik
+
+# Switch to non-root user
+USER traefik
+
+# Expose ports
+EXPOSE 80 443 8080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --quiet --tries=1 --spider http://localhost:8080/ping || exit 1
+
+# Set entrypoint
+ENTRYPOINT ["/usr/local/bin/traefik"]

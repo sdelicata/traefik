@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # Development overrides for Traefik
+  traefik:
+    volumes:
+      - ./logs:/var/log/traefik
+    environment:
+      - TRAEFIK_LOG_LEVEL=DEBUG
+      - TRAEFIK_ACCESSLOG=true
+      - TRAEFIK_ACCESSLOG_FILEPATH=/var/log/traefik/access.log
+      - TRAEFIK_LOG_FILEPATH=/var/log/traefik/traefik.log
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`traefik.localhost`)"
+      - "traefik.http.routers.api.service=api@internal"
+
+  # Development overrides for ext-proc server
+  extproc-plugin:
+    volumes:
+      - ./logs:/var/log/extproc
+      # Hot reload for development (if needed)
+      - ./extproc-server:/app:cached
+    environment:
+      - EXTPROC_LOG_LEVEL=DEBUG
+      - EXTPROC_DEV_MODE=true
+      - EXTPROC_LOG_FILE=/var/log/extproc/extproc.log
+    ports:
+      # Expose gRPC port for debugging
+      - "${EXTPROC_PORT:-9001}:${EXTPROC_GRPC_PORT:-9001}"
+
+  # Development service monitoring (optional)
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # HTTP collector
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - LOG_LEVEL=debug
+    networks:
+      - default
+    profiles:
+      - monitoring
+
+  # Prometheus for metrics collection (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    networks:
+      - default
+    profiles:
+      - monitoring
+
+  # Grafana for visualization (optional)
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana-storage:/var/lib/grafana
+    networks:
+      - default
+    profiles:
+      - monitoring
+
+volumes:
+  grafana-storage:

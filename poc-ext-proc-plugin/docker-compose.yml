@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  # Custom Traefik with ext-proc middleware
+  traefik:
+    build:
+      context: ../  # Build from project root to include all Traefik source
+      dockerfile: poc-ext-proc-plugin/config/Dockerfile.traefik
+    ports:
+      - "${TRAEFIK_HTTP_PORT:-80}:80"
+      - "${TRAEFIK_API_PORT:-8080}:8080"
+    group_add:
+      - "0"  # Add root group for Docker socket access
+    volumes:
+      - ./config/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./config/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - default
+    depends_on:
+      extproc-plugin:
+        condition: service_healthy
+    environment:
+      - TRAEFIK_LOG_LEVEL=${TRAEFIK_LOG_LEVEL:-DEBUG}
+      - TRAEFIK_API_INSECURE=${TRAEFIK_API_INSECURE:-true}
+      - TRAEFIK_API_DASHBOARD=${TRAEFIK_API_DASHBOARD:-true}
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8080/ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+
+  # External processing gRPC server
+  extproc-plugin:
+    build:
+      context: ./extproc-server
+      dockerfile: Dockerfile
+    expose:
+      - "${EXTPROC_GRPC_PORT:-9001}"
+    networks:
+      - default
+    environment:
+      - GRPC_PORT=${EXTPROC_GRPC_PORT:-9001}
+      - LOG_LEVEL=${EXTPROC_LOG_LEVEL:-DEBUG}
+      - TIMEOUT=${EXTPROC_TIMEOUT:-5s}
+    healthcheck:
+      test: ["CMD", "grpc_health_probe", "-addr=:${EXTPROC_GRPC_PORT:-9001}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    restart: unless-stopped
+
+  # Test application
+  whoami:
+    image: traefik/whoami:latest
+    networks:
+      - default
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whoami.rule=Host(`${TEST_HOST:-whoami.localhost}`)"
+      - "traefik.http.services.whoami.loadbalancer.server.port=80"
+      # Define ext-proc middleware directly in labels
+      - "traefik.http.middlewares.extproc-middleware.extproc.grpcserver=extproc-plugin:9001"
+      - "traefik.http.middlewares.extproc-middleware.extproc.timeout=5s"
+      - "traefik.http.middlewares.extproc-middleware.extproc.processingmode.requestheadersmode=SEND"
+      - "traefik.http.middlewares.extproc-middleware.extproc.processingmode.responseheadersmode=SEND"
+      - "traefik.http.middlewares.extproc-middleware.extproc.insecureconn=true"
+      - "traefik.http.routers.whoami.middlewares=extproc-middleware"
+    restart: unless-stopped
+
+networks:
+  default:
+    name: ${COMPOSE_PROJECT_NAME:-poc-ext-proc-plugin}_default
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${NETWORK_SUBNET:-172.20.0.0/16}

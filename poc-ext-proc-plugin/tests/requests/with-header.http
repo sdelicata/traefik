@@ -1,0 +1,27 @@
+# Test request with X-Request-Header
+# This should result in X-Response-Header being added to the response
+
+GET / HTTP/1.1
+Host: whoami.localhost
+X-Request-Header: test-value
+User-Agent: POC-Test-Client
+Accept: text/plain
+
+###
+
+# Test with different header value
+GET / HTTP/1.1
+Host: whoami.localhost  
+X-Request-Header: hello-world
+User-Agent: POC-Test-Client
+Accept: text/plain
+
+###
+
+# Test with multiple headers including X-Request-Header
+GET /info HTTP/1.1
+Host: whoami.localhost
+X-Request-Header: multi-test
+X-Custom-Header: custom-value
+User-Agent: POC-Test-Client
+Accept: application/json

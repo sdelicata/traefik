@@ -1,0 +1,37 @@
+# Traefik dynamic configuration for ext-proc POC
+
+http:
+  middlewares:
+    # Simple test middleware to verify file provider works
+    test-middleware:
+      addPrefix:
+        prefix: "/test"
+    
+    # ext-proc middleware configuration
+    extproc-middleware:
+      extProc:
+        grpcServer: "extproc-plugin:9001"
+        timeout: "5s"
+        processingMode:
+          requestHeadersMode: "SEND"
+          responseHeadersMode: "SEND"
+          requestBodyMode: "NONE"
+          responseBodyMode: "NONE"
+        insecureConn: true  # For development only
+
+  # Routes for API and dashboard
+  routers:
+    # Traefik API/Dashboard
+    api:
+      rule: "Host(`traefik.localhost`)"
+      service: "api@internal"
+      middlewares:
+        - extproc-middleware  # Apply ext-proc to API for testing
+
+# TLS configuration (for HTTPS in production)
+tls:
+  options:
+    default:
+      sslProtocols:
+        - "TLSv1.2"
+        - "TLSv1.3"

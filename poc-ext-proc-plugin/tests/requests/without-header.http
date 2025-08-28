@@ -1,0 +1,22 @@
+# Test request without X-Request-Header
+# This should work normally without any special processing
+
+GET / HTTP/1.1
+Host: whoami.localhost
+User-Agent: POC-Test-Client
+Accept: text/plain
+
+###
+
+# Test with other headers but no X-Request-Header
+GET /info HTTP/1.1
+Host: whoami.localhost
+X-Other-Header: other-value
+User-Agent: POC-Test-Client
+Accept: application/json
+
+###
+
+# Simple GET request
+GET / HTTP/1.1
+Host: whoami.localhost
