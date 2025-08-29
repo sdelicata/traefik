@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	"github.com/traefik/traefik/v3/pkg/config/static"
 	"github.com/traefik/traefik/v3/pkg/types"
 	"go.opentelemetry.io/collector/pdata/ptrace/ptraceotlp"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 )
@@ -463,4 +465,127 @@ func TestNewTracer_HeadersCanonicalization(t *testing.T) {
 			assert.Nil(t, tracer.capturedRequestHeaders)
 		})
 	}
+}
+
+func TestTracer_HeaderAttributeTypes(t *testing.T) {
+	testCases := []struct {
+		desc                    string
+		headers                 http.Header
+		capturedRequestHeaders  []string
+		capturedResponseHeaders []string
+		expectedRequestAttrs    []attribute.KeyValue
+		expectedResponseAttrs   []attribute.KeyValue
+	}{
+		{
+			desc: "Single value request headers use String attribute",
+			headers: http.Header{
+				"X-Custom-Id":   []string{"a111"},
+				"X-Custom-Name": []string{"tom"},
+				"User-Agent":    []string{"test-agent"}, // Should be ignored
+			},
+			capturedRequestHeaders: []string{"X-Custom-Id", "X-Custom-Name", "User-Agent"},
+			expectedRequestAttrs: []attribute.KeyValue{
+				attribute.String("http.request.header.x-custom-id", "a111"),
+				attribute.String("http.request.header.x-custom-name", "tom"),
+			},
+		},
+		{
+			desc: "Multi value request headers use StringSlice attribute",
+			headers: http.Header{
+				"X-Multi-Value": []string{"value1", "value2", "value3"},
+				"X-Single":      []string{"single"},
+			},
+			capturedRequestHeaders: []string{"X-Multi-Value", "X-Single"},
+			expectedRequestAttrs: []attribute.KeyValue{
+				attribute.StringSlice("http.request.header.x-multi-value", []string{"value1", "value2", "value3"}),
+				attribute.String("http.request.header.x-single", "single"),
+			},
+		},
+		{
+			desc: "Single value response headers use String attribute",
+			headers: http.Header{
+				"X-Response-Id": []string{"resp123"},
+				"X-Server":      []string{"traefik"},
+			},
+			capturedResponseHeaders: []string{"X-Response-Id", "X-Server"},
+			expectedResponseAttrs: []attribute.KeyValue{
+				attribute.String("http.response.header.x-response-id", "resp123"),
+				attribute.String("http.response.header.x-server", "traefik"),
+			},
+		},
+		{
+			desc: "Multi value response headers use StringSlice attribute",
+			headers: http.Header{
+				"Set-Cookie":   []string{"session=abc", "auth=xyz"},
+				"X-Single-Hdr": []string{"alone"},
+			},
+			capturedResponseHeaders: []string{"Set-Cookie", "X-Single-Hdr"},
+			expectedResponseAttrs: []attribute.KeyValue{
+				attribute.StringSlice("http.response.header.set-cookie", []string{"session=abc", "auth=xyz"}),
+				attribute.String("http.response.header.x-single-hdr", "alone"),
+			},
+		},
+		{
+			desc: "Empty headers are ignored",
+			headers: http.Header{
+				"X-Empty": []string{},
+				"X-Valid": []string{"value"},
+			},
+			capturedRequestHeaders: []string{"X-Empty", "X-Valid"},
+			expectedRequestAttrs: []attribute.KeyValue{
+				attribute.String("http.request.header.x-valid", "value"),
+			},
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.desc, func(t *testing.T) {
+			t.Parallel()
+
+			mockSpan := &mockSpan{attributes: make([]attribute.KeyValue, 0)}
+			tracer := NewTracer(noop.NewTracerProvider().Tracer("test"), test.capturedRequestHeaders, test.capturedResponseHeaders, nil)
+
+			if test.capturedRequestHeaders != nil {
+				req := &http.Request{
+					Method:     "GET",
+					Header:     test.headers,
+					URL:        &url.URL{Scheme: "http", Host: "example.com", Path: "/test"},
+					RemoteAddr: "127.0.0.1:12345",
+					Host:       "example.com",
+				}
+				tracer.CaptureServerRequest(mockSpan, req)
+
+				var headerAttrs []attribute.KeyValue
+				for _, attr := range mockSpan.attributes {
+					if strings.HasPrefix(string(attr.Key), "http.request.header.") {
+						headerAttrs = append(headerAttrs, attr)
+					}
+				}
+				assert.ElementsMatch(t, test.expectedRequestAttrs, headerAttrs, "Request header attributes don't match expected")
+			}
+
+			if test.capturedResponseHeaders != nil {
+				mockSpan.attributes = make([]attribute.KeyValue, 0) // Reset
+				tracer.CaptureResponse(mockSpan, test.headers, 200, trace.SpanKindServer)
+
+				var headerAttrs []attribute.KeyValue
+				for _, attr := range mockSpan.attributes {
+					if strings.HasPrefix(string(attr.Key), "http.response.header.") {
+						headerAttrs = append(headerAttrs, attr)
+					}
+				}
+				assert.ElementsMatch(t, test.expectedResponseAttrs, headerAttrs, "Response header attributes don't match expected")
+			}
+		})
+	}
+}
+
+// mockSpan is a test helper that captures attributes set on it
+type mockSpan struct {
+	noop.Span
+	attributes []attribute.KeyValue
+}
+
+func (m *mockSpan) SetAttributes(kv ...attribute.KeyValue) {
+	m.attributes = append(m.attributes, kv...)
 }

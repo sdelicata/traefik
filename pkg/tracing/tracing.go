@@ -191,8 +191,13 @@ func (t *Tracer) CaptureClientRequest(span trace.Span, r *http.Request) {
 			continue
 		}
 
-		if value := r.Header[header]; value != nil {
-			span.SetAttributes(attribute.StringSlice(fmt.Sprintf("http.request.header.%s", strings.ToLower(header)), value))
+		if value := r.Header[header]; value != nil && len(value) > 0 {
+			attrKey := fmt.Sprintf("http.request.header.%s", strings.ToLower(header))
+			if len(value) == 1 {
+				span.SetAttributes(attribute.String(attrKey, value[0]))
+			} else {
+				span.SetAttributes(attribute.StringSlice(attrKey, value))
+			}
 		}
 	}
 }
@@ -234,8 +239,13 @@ func (t *Tracer) CaptureServerRequest(span trace.Span, r *http.Request) {
 			continue
 		}
 
-		if value := r.Header[header]; value != nil {
-			span.SetAttributes(attribute.StringSlice(fmt.Sprintf("http.request.header.%s", strings.ToLower(header)), value))
+		if value := r.Header[header]; value != nil && len(value) > 0 {
+			attrKey := fmt.Sprintf("http.request.header.%s", strings.ToLower(header))
+			if len(value) == 1 {
+				span.SetAttributes(attribute.String(attrKey, value[0]))
+			} else {
+				span.SetAttributes(attribute.StringSlice(attrKey, value))
+			}
 		}
 	}
 }
@@ -262,8 +272,13 @@ func (t *Tracer) CaptureResponse(span trace.Span, responseHeaders http.Header, c
 	}
 
 	for _, header := range t.capturedResponseHeaders {
-		if value := responseHeaders[header]; value != nil {
-			span.SetAttributes(attribute.StringSlice(fmt.Sprintf("http.response.header.%s", strings.ToLower(header)), value))
+		if value := responseHeaders[header]; value != nil && len(value) > 0 {
+			attrKey := fmt.Sprintf("http.response.header.%s", strings.ToLower(header))
+			if len(value) == 1 {
+				span.SetAttributes(attribute.String(attrKey, value[0]))
+			} else {
+				span.SetAttributes(attribute.StringSlice(attrKey, value))
+			}
 		}
 	}
 }
