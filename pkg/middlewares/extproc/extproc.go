@@ -14,6 +14,16 @@ import (
 
 const (
 	typeName = "ExtProc"
+
+	// Header processing modes
+	HeaderModeSkip = "SKIP"
+	HeaderModeSend = "SEND"
+
+	// Body processing modes
+	BodyModeNone            = "NONE"
+	BodyModeStreamed        = "STREAMED"
+	BodyModeBuffered        = "BUFFERED"
+	BodyModeBufferedPartial = "BUFFERED_PARTIAL"
 )
 
 // extProc is the external processing middleware.
@@ -87,6 +97,7 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		// Apply request mutations if any
+		// TODO: Validate that response only contains directives for modifying request headers.
 		if err := ApplyRequestMutations(req, procResp); err != nil {
 			logger.Error().Err(err).Msg("Failed to apply request mutations")
 			// Continue without processing on error
@@ -116,6 +127,7 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 }
 
 // responseWriter wraps http.ResponseWriter to intercept response headers.
+// TODO: seems too complex.
 type responseWriter struct {
 	http.ResponseWriter
 	extProc *extProc
@@ -206,12 +218,12 @@ func shouldProcessRequestHeaders(mode *dynamic.ProcessingMode) bool {
 	if mode == nil {
 		return false
 	}
-	return mode.RequestHeadersMode == "SEND" || mode.RequestHeadersMode == "STREAMED"
+	return mode.RequestHeadersMode == HeaderModeSend
 }
 
 func shouldProcessResponseHeaders(mode *dynamic.ProcessingMode) bool {
 	if mode == nil {
 		return false
 	}
-	return mode.ResponseHeadersMode == "SEND" || mode.ResponseHeadersMode == "STREAMED"
+	return mode.ResponseHeadersMode == HeaderModeSend
 }

@@ -38,8 +38,6 @@ type grpcClient struct {
 	conn   *grpc.ClientConn
 	client extprocv3.ExternalProcessorClient
 	config ClientConfig
-	mutex  sync.RWMutex
-	closed bool
 }
 
 // NewGRPCClient creates a new gRPC client for external processing.
@@ -103,20 +101,12 @@ func NewGRPCClient(config ClientConfig) (ExtProcClient, error) {
 
 // ProcessHeaders sends a processing request and returns the response.
 func (c *grpcClient) ProcessHeaders(ctx context.Context, req *extprocv3.ProcessingRequest) (*extprocv3.ProcessingResponse, error) {
-	c.mutex.RLock()
-	if c.closed {
-		c.mutex.RUnlock()
-		return nil, ErrClientClosed
-	}
-	client := c.client
-	c.mutex.RUnlock()
-
 	// Create a context with timeout
 	ctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
 	defer cancel()
 
 	// Create bidirectional stream
-	stream, err := client.Process(ctx)
+	stream, err := c.client.Process(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create processing stream: %w", err)
 	}
@@ -138,14 +128,6 @@ func (c *grpcClient) ProcessHeaders(ctx context.Context, req *extprocv3.Processi
 
 // Close closes the gRPC client connection.
 func (c *grpcClient) Close() error {
-	c.mutex.Lock()
-	defer c.mutex.Unlock()
-
-	if c.closed {
-		return nil
-	}
-
-	c.closed = true
 	return c.conn.Close()
 }
 

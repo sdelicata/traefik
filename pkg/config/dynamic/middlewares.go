@@ -855,12 +855,12 @@ type ExtProc struct {
 // ProcessingMode configures which parts of the HTTP request/response to process.
 type ProcessingMode struct {
 	// RequestHeadersMode controls processing of request headers.
-	// Values: "SKIP", "SEND", "STREAMED"
+	// Values: "SKIP", "SEND"
 	// Default: "SKIP"
 	RequestHeadersMode string `json:"requestHeadersMode,omitempty" toml:"requestHeadersMode,omitempty" yaml:"requestHeadersMode,omitempty" export:"true"`
 
 	// ResponseHeadersMode controls processing of response headers.
-	// Values: "SKIP", "SEND", "STREAMED"
+	// Values: "SKIP", "SEND"
 	// Default: "SKIP"
 	ResponseHeadersMode string `json:"responseHeadersMode,omitempty" toml:"responseHeadersMode,omitempty" yaml:"responseHeadersMode,omitempty" export:"true"`
 

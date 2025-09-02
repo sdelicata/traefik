@@ -1,6 +1,7 @@
 package extproc
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,29 +25,6 @@ func HTTPRequestToProcessingRequest(req *http.Request) (*extprocv3.ProcessingReq
 				Value: value,
 			})
 		}
-	}
-
-	// Add pseudo-headers that might be useful for processing
-	headers = append(headers,
-		&corev3.HeaderValue{
-			Key:   ":method",
-			Value: req.Method,
-		},
-		&corev3.HeaderValue{
-			Key:   ":path",
-			Value: req.URL.Path,
-		},
-		&corev3.HeaderValue{
-			Key:   ":scheme",
-			Value: getScheme(req),
-		},
-	)
-
-	if req.URL.RawQuery != "" {
-		headers = append(headers, &corev3.HeaderValue{
-			Key:   ":query",
-			Value: req.URL.RawQuery,
-		})
 	}
 
 	// Create the processing request
@@ -116,10 +94,8 @@ func ApplyRequestMutations(req *http.Request, resp *extprocv3.ProcessingResponse
 		if r.RequestHeaders != nil && r.RequestHeaders.Response != nil {
 			headerMutation = r.RequestHeaders.Response.HeaderMutation
 		}
-	case *extprocv3.ProcessingResponse_ResponseHeaders:
-		if r.ResponseHeaders != nil && r.ResponseHeaders.Response != nil {
-			headerMutation = r.ResponseHeaders.Response.HeaderMutation
-		}
+	default:
+		return errors.New("unexpected response type")
 	}
 
 	if headerMutation == nil {
@@ -140,14 +116,12 @@ func ApplyResponseMutations(rw http.ResponseWriter, resp *extprocv3.ProcessingRe
 	var headerMutation *extprocv3.HeaderMutation
 
 	switch r := resp.Response.(type) {
-	case *extprocv3.ProcessingResponse_RequestHeaders:
-		if r.RequestHeaders != nil && r.RequestHeaders.Response != nil {
-			headerMutation = r.RequestHeaders.Response.HeaderMutation
-		}
 	case *extprocv3.ProcessingResponse_ResponseHeaders:
 		if r.ResponseHeaders != nil && r.ResponseHeaders.Response != nil {
 			headerMutation = r.ResponseHeaders.Response.HeaderMutation
 		}
+	default:
+		return errors.New("unexpected response type")
 	}
 
 	if headerMutation == nil {
