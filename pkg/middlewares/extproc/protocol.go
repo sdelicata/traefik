@@ -27,6 +27,27 @@ func HTTPRequestToProcessingRequest(req *http.Request) (*extprocv3.ProcessingReq
 		}
 	}
 
+	// Add pseudo-headers that might be useful for processing
+	// Following RFC 7540 HTTP/2 specification for pseudo-headers
+	headers = append(headers,
+		&corev3.HeaderValue{
+			Key:   ":method",
+			Value: req.Method,
+		},
+		&corev3.HeaderValue{
+			Key:   ":path",
+			Value: getPath(req),
+		},
+		&corev3.HeaderValue{
+			Key:   ":scheme",
+			Value: getScheme(req),
+		},
+		&corev3.HeaderValue{
+			Key:   ":authority",
+			Value: getAuthority(req),
+		},
+	)
+
 	// Create the processing request
 	procReq := &extprocv3.ProcessingRequest{
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
@@ -187,6 +208,57 @@ func getScheme(req *http.Request) string {
 	}
 
 	return "http"
+}
+
+// getPath returns the path for the HTTP request according to RFC 7540.
+// The :path pseudo-header field includes the path and query parts of the target URI.
+// According to RFC 7540, this MUST NOT be empty for http or https URIs.
+func getPath(req *http.Request) string {
+	path := req.URL.Path
+	if path == "" {
+		path = "/"
+	}
+
+	// Include query parameters as per RFC 7540
+	if req.URL.RawQuery != "" {
+		return path + "?" + req.URL.RawQuery
+	}
+
+	return path
+}
+
+// getAuthority returns the authority for the HTTP request according to RFC 7540.
+// The authority includes the authority portion of the target URI, which replaces
+// the Host header field in HTTP/2. According to RFC 7540, the authority MUST NOT
+// include the deprecated userinfo subcomponent for http or https schemes.
+func getAuthority(req *http.Request) string {
+	// Per RFC 7540, clients should use :authority instead of Host header,
+	// but in HTTP/1.1 to HTTP/2 conversion, we extract from req.Host first
+	// as it's the canonical source in Go's http.Request
+	if req.Host != "" {
+		// Ensure no userinfo is included (forbidden by RFC 7540)
+		if strings.Contains(req.Host, "@") {
+			// Strip userinfo if present (though this should be rare in practice)
+			if idx := strings.LastIndex(req.Host, "@"); idx != -1 {
+				return req.Host[idx+1:]
+			}
+		}
+		return req.Host
+	}
+
+	// Fallback to URL.Host if req.Host is empty
+	if req.URL != nil && req.URL.Host != "" {
+		// Strip userinfo from URL.Host if present
+		if strings.Contains(req.URL.Host, "@") {
+			if idx := strings.LastIndex(req.URL.Host, "@"); idx != -1 {
+				return req.URL.Host[idx+1:]
+			}
+		}
+		return req.URL.Host
+	}
+
+	// Return empty if no authority can be determined
+	return ""
 }
 
 // validateProcessingResponse validates that a ProcessingResponse is well-formed.
