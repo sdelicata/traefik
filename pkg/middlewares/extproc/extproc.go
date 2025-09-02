@@ -76,8 +76,32 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	ctx := req.Context()
 	logger := middlewares.GetLogger(ctx, e.name, typeName)
 
-	// Check if processing mode requires request header processing
-	if shouldProcessRequestHeaders(e.config.ProcessingMode) {
+	// Check if any processing is needed
+	needsRequestProcessing := shouldProcessRequestHeaders(e.config.ProcessingMode)
+	needsResponseProcessing := shouldProcessResponseHeaders(e.config.ProcessingMode)
+
+	if !needsRequestProcessing && !needsResponseProcessing {
+		// No processing needed, continue normally
+		e.next.ServeHTTP(rw, req)
+		return
+	}
+
+	// Create persistent gRPC stream for this HTTP request
+	stream, err := e.client.CreateStream(ctx)
+	if err != nil {
+		logger.Error().Err(err).Msg("Failed to create ext-proc stream")
+		// Continue without processing on error (fail-open)
+		e.next.ServeHTTP(rw, req)
+		return
+	}
+	defer stream.Close()
+
+	// Store stream in context for reuse in response processing
+	ctxWithStream := storeStreamInContext(ctx, stream)
+	req = req.WithContext(ctxWithStream)
+
+	// Process request headers if configured
+	if needsRequestProcessing {
 		// Create processing request for request headers
 		procReq, err := HTTPRequestToProcessingRequest(req)
 		if err != nil {
@@ -87,8 +111,8 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			return
 		}
 
-		// Send to external processor
-		procResp, err := e.client.ProcessHeaders(ctx, procReq)
+		// Send to external processor using persistent stream
+		procResp, err := e.client.ProcessHeaders(ctxWithStream, procReq)
 		if err != nil {
 			logger.Error().Err(err).Msg("External processing failed")
 			// Continue without processing on error (fail-open)
@@ -106,13 +130,13 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		logger.Debug().Msg("Request headers processed successfully")
 	}
 
-	// Check if processing mode requires response header processing
-	if shouldProcessResponseHeaders(e.config.ProcessingMode) {
-		// Wrap the response writer to intercept response
+	// Process response headers if configured
+	if needsResponseProcessing {
+		// Wrap the response writer to intercept response (will reuse the same stream)
 		wrappedRW := &responseWriter{
 			ResponseWriter: rw,
 			extProc:        e,
-			ctx:            ctx,
+			ctx:            ctxWithStream, // Use context with stream
 			logger:         logger,
 			headers:        make(http.Header),
 			statusCode:     http.StatusOK, // Default status

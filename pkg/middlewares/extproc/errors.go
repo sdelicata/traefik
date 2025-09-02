@@ -11,7 +11,6 @@ var (
 
 	// Client errors
 	ErrClientClosed      = errors.New("gRPC client is closed")
-	ErrPoolClosed        = errors.New("client pool is closed")
 	ErrConnectionFailed  = errors.New("failed to connect to gRPC server")
 	ErrHealthCheckFailed = errors.New("health check failed")
 

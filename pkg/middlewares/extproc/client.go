@@ -3,7 +3,6 @@ package extproc
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"google.golang.org/grpc"
@@ -13,13 +12,55 @@ import (
 	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 )
 
+// contextKey is a type for context keys to avoid collisions
+type contextKey string
+
+// streamContextKey is used to store the gRPC stream in the HTTP request context
+const streamContextKey contextKey = "extproc-stream"
+
 const (
 	defaultTimeout    = 5 * time.Second
 	defaultMaxMsgSize = 4 * 1024 * 1024 // 4MB
 )
 
+// StreamWrapper wraps the gRPC stream with context management
+type StreamWrapper struct {
+	stream extprocv3.ExternalProcessor_ProcessClient
+	cancel context.CancelFunc
+}
+
+// Send sends a processing request on the stream
+func (s *StreamWrapper) Send(req *extprocv3.ProcessingRequest) error {
+	return s.stream.Send(req)
+}
+
+// Recv receives a processing response from the stream
+func (s *StreamWrapper) Recv() (*extprocv3.ProcessingResponse, error) {
+	return s.stream.Recv()
+}
+
+// Close closes the stream and cancels the context
+func (s *StreamWrapper) Close() error {
+	if s.cancel != nil {
+		s.cancel()
+	}
+	return s.stream.CloseSend()
+}
+
+// getStreamFromContext retrieves the gRPC stream from the HTTP request context
+func getStreamFromContext(ctx context.Context) (*StreamWrapper, bool) {
+	stream, ok := ctx.Value(streamContextKey).(*StreamWrapper)
+	return stream, ok
+}
+
+// storeStreamInContext stores the gRPC stream in the HTTP request context
+func storeStreamInContext(ctx context.Context, stream *StreamWrapper) context.Context {
+	return context.WithValue(ctx, streamContextKey, stream)
+}
+
 // ExtProcClient defines the interface for external processing client.
 type ExtProcClient interface {
+	CreateStream(ctx context.Context) (*StreamWrapper, error)
 	ProcessHeaders(ctx context.Context, req *extprocv3.ProcessingRequest) (*extprocv3.ProcessingResponse, error)
 	Close() error
 }
@@ -99,18 +140,31 @@ func NewGRPCClient(config ClientConfig) (ExtProcClient, error) {
 	}, nil
 }
 
-// ProcessHeaders sends a processing request and returns the response.
-func (c *grpcClient) ProcessHeaders(ctx context.Context, req *extprocv3.ProcessingRequest) (*extprocv3.ProcessingResponse, error) {
-	// Create a context with timeout
-	ctx, cancel := context.WithTimeout(ctx, c.config.Timeout)
-	defer cancel()
+// CreateStream creates a new persistent gRPC stream for external processing
+func (c *grpcClient) CreateStream(ctx context.Context) (*StreamWrapper, error) {
+	// Create a context with timeout for the entire stream lifetime
+	streamCtx, cancel := context.WithTimeout(ctx, c.config.Timeout*10) // Extended timeout for persistent stream
 
 	// Create bidirectional stream
-	stream, err := c.client.Process(ctx)
+	stream, err := c.client.Process(streamCtx)
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("failed to create processing stream: %w", err)
 	}
-	defer stream.CloseSend()
+
+	return &StreamWrapper{
+		stream: stream,
+		cancel: cancel,
+	}, nil
+}
+
+// ProcessHeaders sends a processing request and returns the response using persistent stream.
+func (c *grpcClient) ProcessHeaders(ctx context.Context, req *extprocv3.ProcessingRequest) (*extprocv3.ProcessingResponse, error) {
+	// Get the persistent stream from context
+	stream, ok := getStreamFromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("no persistent stream found in context - CreateStream must be called first")
+	}
 
 	// Send the processing request
 	if err := stream.Send(req); err != nil {
@@ -129,108 +183,4 @@ func (c *grpcClient) ProcessHeaders(ctx context.Context, req *extprocv3.Processi
 // Close closes the gRPC client connection.
 func (c *grpcClient) Close() error {
 	return c.conn.Close()
-}
-
-// Pool manages a pool of gRPC clients for better performance.
-type Pool struct {
-	config  ClientConfig
-	clients chan ExtProcClient
-	factory func() (ExtProcClient, error)
-	maxSize int
-	mutex   sync.RWMutex
-	closed  bool
-}
-
-// NewPool creates a new client pool.
-func NewPool(config ClientConfig, maxSize int) (*Pool, error) {
-	if maxSize <= 0 {
-		maxSize = 10 // Default pool size
-	}
-
-	pool := &Pool{
-		config:  config,
-		clients: make(chan ExtProcClient, maxSize),
-		maxSize: maxSize,
-		factory: func() (ExtProcClient, error) {
-			return NewGRPCClient(config)
-		},
-	}
-
-	// Pre-populate the pool with initial connections
-	initialSize := maxSize / 2
-	if initialSize < 1 {
-		initialSize = 1
-	}
-
-	for i := 0; i < initialSize; i++ {
-		client, err := pool.factory()
-		if err != nil {
-			pool.Close()
-			return nil, fmt.Errorf("failed to create initial client: %w", err)
-		}
-		pool.clients <- client
-	}
-
-	return pool, nil
-}
-
-// Get retrieves a client from the pool.
-func (p *Pool) Get() (ExtProcClient, error) {
-	p.mutex.RLock()
-	if p.closed {
-		p.mutex.RUnlock()
-		return nil, ErrPoolClosed
-	}
-	p.mutex.RUnlock()
-
-	select {
-	case client := <-p.clients:
-		return client, nil
-	default:
-		// Pool is empty, create a new client
-		return p.factory()
-	}
-}
-
-// Put returns a client to the pool.
-func (p *Pool) Put(client ExtProcClient) {
-	if client == nil {
-		return
-	}
-
-	p.mutex.RLock()
-	if p.closed {
-		p.mutex.RUnlock()
-		client.Close()
-		return
-	}
-	p.mutex.RUnlock()
-
-	select {
-	case p.clients <- client:
-		// Client returned to pool
-	default:
-		// Pool is full, close the client
-		client.Close()
-	}
-}
-
-// Close closes all clients in the pool.
-func (p *Pool) Close() error {
-	p.mutex.Lock()
-	defer p.mutex.Unlock()
-
-	if p.closed {
-		return nil
-	}
-
-	p.closed = true
-	close(p.clients)
-
-	// Close all clients in the pool
-	for client := range p.clients {
-		client.Close()
-	}
-
-	return nil
 }
