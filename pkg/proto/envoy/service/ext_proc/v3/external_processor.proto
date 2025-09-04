@@ -1,0 +1,100 @@
+syntax = "proto3";
+package envoy.service.ext_proc.v3;
+option go_package = "github.com/traefik/traefik/v3/pkg/proto/envoy/service/ext_proc/v3";
+
+import "envoy/config/core/v3/base.proto";
+import "envoy/extensions/filters/http/ext_proc/v3/processing_mode.proto";
+import "envoy/type/v3/http_status.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/struct.proto";
+
+message ProtocolConfiguration {
+  envoy.extensions.filters.http.ext_proc.v3.BodySendMode request_body_mode = 1;
+  envoy.extensions.filters.http.ext_proc.v3.BodySendMode response_body_mode = 2;
+  bool send_body_without_waiting_for_header_response = 3;
+}
+
+message ProcessingRequest {
+  oneof request {
+    HttpHeaders request_headers = 1;
+    HttpHeaders response_headers = 2;
+    HttpBody request_body = 3;
+    HttpBody response_body = 4;
+    HttpTrailers request_trailers = 5;
+    HttpTrailers response_trailers = 6;
+  }
+  envoy.config.core.v3.Metadata metadata_context = 8;
+  map<string, google.protobuf.Struct> attributes = 9;
+  bool observability_mode = 10;
+  ProtocolConfiguration protocol_config = 11;
+}
+
+message ProcessingResponse {
+  oneof response {
+    HeadersResponse request_headers = 1;
+    HeadersResponse response_headers = 2;
+    BodyResponse request_body = 3;
+    BodyResponse response_body = 4;
+    HeadersResponse request_trailers = 5;
+    HeadersResponse response_trailers = 6;
+    ImmediateResponse immediate_response = 7;
+  }
+  ModeOverride mode_override = 8;
+}
+
+message HttpHeaders {
+  envoy.config.core.v3.HeaderMap headers = 1;
+  bool end_of_stream = 2;
+}
+
+message HttpBody {
+  bytes body = 1;
+  bool end_of_stream = 2;
+}
+
+message HttpTrailers {
+  envoy.config.core.v3.HeaderMap trailers = 1;
+}
+
+message HeadersResponse {
+  CommonResponse response = 1;
+}
+
+message BodyResponse {
+  CommonResponse response = 1;
+}
+
+message CommonResponse {
+  enum ResponseStatus {
+    CONTINUE = 0;
+    CONTINUE_AND_REPLACE = 1;
+  }
+  ResponseStatus status = 1;
+  HeaderMutation header_mutation = 2;
+  BodyMutation body_mutation = 3;
+  google.protobuf.Duration request_timeout = 4;
+}
+
+message HeaderMutation {
+  repeated envoy.config.core.v3.HeaderValueOption set_headers = 1;
+  repeated string remove_headers = 2;
+}
+
+message BodyMutation {
+  bytes body = 1;
+  bool clear_body = 2;
+}
+
+message ImmediateResponse {
+  envoy.type.v3.HttpStatus status = 1;
+  HeaderMutation headers = 2;
+  string body = 3;
+}
+
+message ModeOverride {
+  envoy.extensions.filters.http.ext_proc.v3.ProcessingMode processing_mode = 1;
+}
+
+service ExternalProcessor {
+  rpc Process(stream ProcessingRequest) returns (stream ProcessingResponse);
+}

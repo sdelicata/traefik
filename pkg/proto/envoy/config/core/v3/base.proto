@@ -1,0 +1,23 @@
+syntax = "proto3";
+package envoy.config.core.v3;
+option go_package = "github.com/traefik/traefik/v3/pkg/proto/envoy/config/core/v3";
+import "google/protobuf/struct.proto";
+import "google/protobuf/wrappers.proto";
+
+message HeaderValue {
+  string key = 1;
+  string value = 2;
+}
+
+message HeaderValueOption {
+  HeaderValue header = 1;
+  google.protobuf.BoolValue append = 2;
+}
+
+message HeaderMap {
+  repeated HeaderValue headers = 1;
+}
+
+message Metadata {
+  map<string, google.protobuf.Struct> filter_metadata = 1;
+}

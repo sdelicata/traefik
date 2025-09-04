@@ -1,0 +1,26 @@
+syntax = "proto3";
+package envoy.extensions.filters.http.ext_proc.v3;
+option go_package = "github.com/traefik/traefik/v3/pkg/proto/envoy/extensions/filters/http/ext_proc/v3";
+
+enum HeaderSendMode {
+  DEFAULT = 0;
+  SEND = 1;
+  SKIP = 2;
+}
+
+enum BodySendMode {
+  NONE = 0;
+  STREAMED = 1;
+  BUFFERED = 2;
+  BUFFERED_PARTIAL = 3;
+  FULL_DUPLEX_STREAMED = 4;
+}
+
+message ProcessingMode {
+  HeaderSendMode request_headers_mode = 1;
+  HeaderSendMode response_headers_mode = 2;
+  BodySendMode request_body_mode = 3;
+  BodySendMode response_body_mode = 4;
+  HeaderSendMode request_trailers_mode = 5;
+  HeaderSendMode response_trailers_mode = 6;
+}

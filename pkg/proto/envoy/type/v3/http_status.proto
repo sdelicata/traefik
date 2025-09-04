@@ -1,0 +1,7 @@
+syntax = "proto3";
+package envoy.type.v3;
+option go_package = "github.com/traefik/traefik/v3/pkg/proto/envoy/type/v3";
+
+message HttpStatus {
+  uint32 code = 1;
+}
