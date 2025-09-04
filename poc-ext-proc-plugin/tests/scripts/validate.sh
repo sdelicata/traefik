@@ -91,8 +91,20 @@ run_test "Request without X-Request-Header works normally" \
     "curl -s -H 'Host: $TEST_HOST' $TRAEFIK_URL/ | grep -q 'Hostname:'" \
     "Should work normally without special header"
 
-# Test 7: Multiple concurrent requests
-log_info "Test 7: Concurrent Request Handling"
+# Test 7: Body processing with "stop" keyword
+log_info "Test 7: Body Processing - Stop Detection"
+run_test "Request body with 'stop' should return 503" \
+    "curl -s -X POST -H 'Host: $TEST_HOST' -H 'Content-Type: application/json' -d '{\"action\": \"stop\"}' $TRAEFIK_URL/ -w '%{http_code}' -o /dev/null | grep -q '503'" \
+    "Should return 503 when body contains 'stop'"
+
+# Test 8: Body processing without "stop" keyword  
+log_info "Test 8: Body Processing - Normal Processing"
+run_test "Request body without 'stop' should continue normally" \
+    "curl -s -X POST -H 'Host: $TEST_HOST' -H 'Content-Type: application/json' -d '{\"action\": \"continue\"}' $TRAEFIK_URL/ | grep -q 'Hostname:'" \
+    "Should process normally when body doesn't contain 'stop'"
+
+# Test 9: Multiple concurrent requests
+log_info "Test 9: Concurrent Request Handling"
 run_test "Multiple concurrent requests" \
     "for i in {1..5}; do curl -s -H 'X-Request-Header: concurrent-$i' -H 'Host: $TEST_HOST' $TRAEFIK_URL/ & done; wait" \
     "Should handle concurrent requests"

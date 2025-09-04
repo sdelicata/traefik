@@ -9,7 +9,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health/grpc_health_v1"
 
-	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	extprocv3 "github.com/traefik/traefik/v3/pkg/proto/envoy/service/ext_proc/v3"
 )
 
 // contextKey is a type for context keys to avoid collisions
@@ -62,6 +62,7 @@ func storeStreamInContext(ctx context.Context, stream *StreamWrapper) context.Co
 type ExtProcClient interface {
 	CreateStream(ctx context.Context) (*StreamWrapper, error)
 	ProcessHeaders(ctx context.Context, req *extprocv3.ProcessingRequest) (*extprocv3.ProcessingResponse, error)
+	ProcessBody(ctx context.Context, req *extprocv3.ProcessingRequest) (*extprocv3.ProcessingResponse, error)
 	Close() error
 }
 
@@ -175,6 +176,28 @@ func (c *grpcClient) ProcessHeaders(ctx context.Context, req *extprocv3.Processi
 	resp, err := stream.Recv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to receive processing response: %w", err)
+	}
+
+	return resp, nil
+}
+
+// ProcessBody sends a body processing request and returns the response using persistent stream.
+func (c *grpcClient) ProcessBody(ctx context.Context, req *extprocv3.ProcessingRequest) (*extprocv3.ProcessingResponse, error) {
+	// Get the persistent stream from context
+	stream, ok := getStreamFromContext(ctx)
+	if !ok {
+		return nil, fmt.Errorf("no persistent stream found in context - CreateStream must be called first")
+	}
+
+	// Send the processing request
+	if err := stream.Send(req); err != nil {
+		return nil, fmt.Errorf("failed to send body processing request: %w", err)
+	}
+
+	// Receive the processing response
+	resp, err := stream.Recv()
+	if err != nil {
+		return nil, fmt.Errorf("failed to receive body processing response: %w", err)
 	}
 
 	return resp, nil

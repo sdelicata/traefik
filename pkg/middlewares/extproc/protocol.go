@@ -1,17 +1,21 @@
 package extproc
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
-	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
-	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	"github.com/traefik/traefik/v3/pkg/config/dynamic"
+	corev3 "github.com/traefik/traefik/v3/pkg/proto/envoy/config/core/v3"
+	processingmodev3 "github.com/traefik/traefik/v3/pkg/proto/envoy/extensions/filters/http/ext_proc/v3"
+	extprocv3 "github.com/traefik/traefik/v3/pkg/proto/envoy/service/ext_proc/v3"
 )
 
 // HTTPRequestToProcessingRequest converts an HTTP request to a ProcessingRequest.
-func HTTPRequestToProcessingRequest(req *http.Request) (*extprocv3.ProcessingRequest, error) {
+func HTTPRequestToProcessingRequest(req *http.Request, config *dynamic.ExtProc) (*extprocv3.ProcessingRequest, error) {
 	if req == nil {
 		return nil, ErrNilRequest
 	}
@@ -48,8 +52,33 @@ func HTTPRequestToProcessingRequest(req *http.Request) (*extprocv3.ProcessingReq
 		},
 	)
 
+	// Convert configuration to protocol configuration
+	var requestBodyMode, responseBodyMode processingmodev3.BodySendMode
+	var err error
+
+	if config != nil && config.ProcessingMode != nil {
+		requestBodyMode, err = stringToBodySendMode(config.ProcessingMode.RequestBodyMode)
+		if err != nil {
+			return nil, fmt.Errorf("invalid request body mode: %w", err)
+		}
+
+		responseBodyMode, err = stringToBodySendMode(config.ProcessingMode.ResponseBodyMode)
+		if err != nil {
+			return nil, fmt.Errorf("invalid response body mode: %w", err)
+		}
+	} else {
+		// Default values when no config is provided
+		requestBodyMode = processingmodev3.BodySendMode_NONE
+		responseBodyMode = processingmodev3.BodySendMode_NONE
+	}
+
 	// Create the processing request
 	procReq := &extprocv3.ProcessingRequest{
+		ProtocolConfig: &extprocv3.ProtocolConfiguration{
+			RequestBodyMode:                         requestBodyMode,
+			ResponseBodyMode:                        responseBodyMode,
+			SendBodyWithoutWaitingForHeaderResponse: false,
+		},
 		Request: &extprocv3.ProcessingRequest_RequestHeaders{
 			RequestHeaders: &extprocv3.HttpHeaders{
 				Headers: &corev3.HeaderMap{
@@ -259,6 +288,62 @@ func getAuthority(req *http.Request) string {
 
 	// Return empty if no authority can be determined
 	return ""
+}
+
+// ReadRequestBody reads and buffers the HTTP request body.
+// It restores the body so the request can still be processed by downstream handlers.
+func ReadRequestBody(req *http.Request) ([]byte, error) {
+	if req.Body == nil {
+		return []byte{}, nil
+	}
+
+	// Read the body
+	bodyBytes, err := io.ReadAll(req.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read request body: %w", err)
+	}
+
+	// Close the original body
+	req.Body.Close()
+
+	// Restore the body for downstream use
+	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	return bodyBytes, nil
+}
+
+// HTTPRequestBodyToProcessingRequest converts request body bytes to a ProcessingRequest.
+func HTTPRequestBodyToProcessingRequest(bodyBytes []byte) (*extprocv3.ProcessingRequest, error) {
+	// Create the processing request for body
+	procReq := &extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestBody{
+			RequestBody: &extprocv3.HttpBody{
+				Body:        bodyBytes,
+				EndOfStream: true, // We're buffering the entire body
+			},
+		},
+	}
+
+	return procReq, nil
+}
+
+// stringToBodySendMode converts a string to BodySendMode enum.
+// Returns an error for invalid values since config validation should happen upstream.
+func stringToBodySendMode(mode string) (processingmodev3.BodySendMode, error) {
+	switch mode {
+	case "BUFFERED":
+		return processingmodev3.BodySendMode_BUFFERED, nil
+	case "STREAMED":
+		return processingmodev3.BodySendMode_STREAMED, nil
+	case "BUFFERED_PARTIAL":
+		return processingmodev3.BodySendMode_BUFFERED_PARTIAL, nil
+	case "FULL_DUPLEX_STREAMED":
+		return processingmodev3.BodySendMode_FULL_DUPLEX_STREAMED, nil
+	case "NONE", "":
+		return processingmodev3.BodySendMode_NONE, nil
+	default:
+		return processingmodev3.BodySendMode_NONE, fmt.Errorf("invalid BodySendMode: %s", mode)
+	}
 }
 
 // validateProcessingResponse validates that a ProcessingResponse is well-formed.

@@ -67,6 +67,7 @@ services:
       - "traefik.http.middlewares.extproc-middleware.extproc.timeout=5s"
       - "traefik.http.middlewares.extproc-middleware.extproc.processingmode.requestheadersmode=SEND"
       - "traefik.http.middlewares.extproc-middleware.extproc.processingmode.responseheadersmode=SEND"
+      - "traefik.http.middlewares.extproc-middleware.extproc.processingmode.requestbodymode=BUFFERED"
       - "traefik.http.middlewares.extproc-middleware.extproc.insecureconn=true"
       - "traefik.http.routers.whoami.middlewares=extproc-middleware"
     restart: unless-stopped

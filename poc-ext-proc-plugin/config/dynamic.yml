@@ -15,7 +15,7 @@ http:
         processingMode:
           requestHeadersMode: "SEND"
           responseHeadersMode: "SEND"
-          requestBodyMode: "NONE"
+          requestBodyMode: "BUFFERED"
           responseBodyMode: "NONE"
         insecureConn: true  # For development only
 

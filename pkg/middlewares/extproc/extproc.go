@@ -79,8 +79,9 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// Check if any processing is needed
 	needsRequestProcessing := shouldProcessRequestHeaders(e.config.ProcessingMode)
 	needsResponseProcessing := shouldProcessResponseHeaders(e.config.ProcessingMode)
+	needsBodyProcessing := shouldProcessRequestBody(e.config.ProcessingMode)
 
-	if !needsRequestProcessing && !needsResponseProcessing {
+	if !needsRequestProcessing && !needsResponseProcessing && !needsBodyProcessing {
 		// No processing needed, continue normally
 		e.next.ServeHTTP(rw, req)
 		return
@@ -103,7 +104,8 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 	// Process request headers if configured
 	if needsRequestProcessing {
 		// Create processing request for request headers
-		procReq, err := HTTPRequestToProcessingRequest(req)
+		// FIXME: rename to introduce header idea.
+		procReq, err := HTTPRequestToProcessingRequest(req, e.config)
 		if err != nil {
 			logger.Error().Err(err).Msg("Failed to create processing request")
 			// Continue without processing on error (fail-open)
@@ -128,6 +130,55 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		}
 
 		logger.Debug().Msg("Request headers processed successfully")
+	}
+
+	// Process request body if configured
+	if needsBodyProcessing {
+		// Read and buffer the request body
+		bodyBytes, err := ReadRequestBody(req)
+		if err != nil {
+			logger.Error().Err(err).Msg("Failed to read request body")
+			// Continue without processing on error (fail-open)
+			e.next.ServeHTTP(rw, req)
+			return
+		}
+
+		// Create processing request for request body
+		procReq, err := HTTPRequestBodyToProcessingRequest(bodyBytes)
+		if err != nil {
+			logger.Error().Err(err).Msg("Failed to create body processing request")
+			// Continue without processing on error (fail-open)
+			e.next.ServeHTTP(rw, req)
+			return
+		}
+
+		// Send to external processor using persistent stream
+		procResp, err := e.client.ProcessBody(ctxWithStream, procReq)
+		if err != nil {
+			logger.Error().Err(err).Msg("External body processing failed")
+			// Continue without processing on error (fail-open)
+			e.next.ServeHTTP(rw, req)
+			return
+		}
+
+		// Check if we should return an immediate response (error)
+		if procResp.GetImmediateResponse() != nil {
+			immediateResp := procResp.GetImmediateResponse()
+			statusCode := int(immediateResp.Status.Code)
+
+			logger.Info().
+				Int("status_code", statusCode).
+				Msg("External processor requested immediate response")
+
+			// Write the immediate response
+			rw.WriteHeader(statusCode)
+			if len(immediateResp.Body) > 0 {
+				rw.Write([]byte(immediateResp.Body))
+			}
+			return
+		}
+
+		logger.Debug().Msg("Request body processed successfully")
 	}
 
 	// Process response headers if configured
@@ -250,4 +301,11 @@ func shouldProcessResponseHeaders(mode *dynamic.ProcessingMode) bool {
 		return false
 	}
 	return mode.ResponseHeadersMode == HeaderModeSend
+}
+
+func shouldProcessRequestBody(mode *dynamic.ProcessingMode) bool {
+	if mode == nil {
+		return false
+	}
+	return mode.RequestBodyMode != "" && mode.RequestBodyMode != BodyModeNone
 }
