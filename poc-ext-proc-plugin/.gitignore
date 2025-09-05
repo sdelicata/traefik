@@ -64,3 +64,7 @@ docker-compose.local.yml
 # Generated protobuf files (will be generated during build)
 *.pb.go
 *_grpc.pb.go
+
+# Keep proto source definitions
+!extproc-server/proto-definitions/
+!extproc-server/proto-definitions/**/*.proto
