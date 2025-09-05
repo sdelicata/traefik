@@ -1,0 +1,11 @@
+### Test request without "stop" in body - should continue normally
+POST http://traefik.localhost:8080/api/http/routers
+Content-Type: application/json
+X-Request-Header: test-without-stop
+
+{
+  "name": "test-router",
+  "rule": "Host(`example.com`)",
+  "service": "test-service",
+  "middleware": ["continue"]
+}

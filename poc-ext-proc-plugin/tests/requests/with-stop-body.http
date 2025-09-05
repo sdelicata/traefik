@@ -1,0 +1,11 @@
+### Test request with "stop" in body - should return 503
+POST http://traefik.localhost:8080/api/http/routers
+Content-Type: application/json
+X-Request-Header: test-with-stop
+
+{
+  "name": "test-router",
+  "rule": "Host(`example.com`)",
+  "service": "test-service",
+  "middleware": ["stop"]
+}

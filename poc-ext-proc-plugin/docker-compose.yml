@@ -63,12 +63,12 @@ services:
       - "traefik.http.routers.whoami.rule=Host(`${TEST_HOST:-whoami.localhost}`)"
       - "traefik.http.services.whoami.loadbalancer.server.port=80"
       # Define ext-proc middleware directly in labels
-      - "traefik.http.middlewares.extproc-middleware.extproc.grpcserver=extproc-plugin:9001"
-      - "traefik.http.middlewares.extproc-middleware.extproc.timeout=5s"
-      - "traefik.http.middlewares.extproc-middleware.extproc.processingmode.requestheadersmode=SEND"
-      - "traefik.http.middlewares.extproc-middleware.extproc.processingmode.responseheadersmode=SEND"
-      - "traefik.http.middlewares.extproc-middleware.extproc.processingmode.requestbodymode=BUFFERED"
-      - "traefik.http.middlewares.extproc-middleware.extproc.insecureconn=true"
+      - "traefik.http.middlewares.extproc-middleware.extProc.grpcServer=extproc-plugin:9001"
+      - "traefik.http.middlewares.extproc-middleware.extProc.timeout=5s"
+      - "traefik.http.middlewares.extproc-middleware.extProc.processingMode.requestHeadersMode=SEND"
+      - "traefik.http.middlewares.extproc-middleware.extProc.processingMode.responseHeadersMode=SEND"
+      - "traefik.http.middlewares.extproc-middleware.extProc.processingMode.requestBodyMode=BUFFERED"
+      - "traefik.http.middlewares.extproc-middleware.extProc.insecureConn=true"
       - "traefik.http.routers.whoami.middlewares=extproc-middleware"
     restart: unless-stopped
 

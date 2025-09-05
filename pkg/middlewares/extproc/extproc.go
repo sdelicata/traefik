@@ -193,7 +193,7 @@ func (e *extProc) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 			statusCode:     http.StatusOK, // Default status
 		}
 
-		// Continue with the middleware chain
+		// Continue with the middleware chain (use updated request with stream context)
 		e.next.ServeHTTP(wrappedRW, req)
 	} else {
 		// No response processing needed, continue normally

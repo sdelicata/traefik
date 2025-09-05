@@ -52,9 +52,9 @@ run_test() {
 
 # Test 1: Traefik API accessibility
 log_info "Test 1: Traefik API Accessibility"
-run_test "Traefik Ping" \
-    "curl -s $TRAEFIK_API/ping | grep -q 'OK'" \
-    "Should return OK"
+run_test "Traefik API accessible" \
+    "curl -s $TRAEFIK_API/api/overview | grep -q 'routers'" \
+    "Should return API data"
 
 # Test 2: Service connectivity
 log_info "Test 2: Service Connectivity"
@@ -65,7 +65,7 @@ run_test "whoami service accessible" \
 # Test 3: ext-proc middleware loaded
 log_info "Test 3: ext-proc Middleware Status"
 run_test "ext-proc middleware loaded in Traefik" \
-    "curl -s $TRAEFIK_API/api/rawdata | jq -r '.http.middlewares | keys[]' | grep -q 'extproc'" \
+    "curl -s $TRAEFIK_API/api/rawdata | jq -r '.middlewares | keys[]' | grep -q 'extproc'" \
     "Should find extproc middleware"
 
 # Test 4: gRPC server connectivity (if available)
@@ -82,7 +82,7 @@ fi
 # Test 5: Header processing (when ext-proc is working)
 log_info "Test 5: Header Processing"
 run_test "Request with X-Request-Header processed" \
-    "curl -s -H 'X-Request-Header: test-value' -H 'Host: $TEST_HOST' -I $TRAEFIK_URL/ | grep -i 'x-response-header:'" \
+    "curl -s -H \"X-Request-Header: test-value\" -H \"Host: $TEST_HOST\" -I $TRAEFIK_URL/ | grep -i 'x-response-header:'" \
     "Should add X-Response-Header to response"
 
 # Test 6: Normal request without special header
@@ -94,7 +94,7 @@ run_test "Request without X-Request-Header works normally" \
 # Test 7: Body processing with "stop" keyword
 log_info "Test 7: Body Processing - Stop Detection"
 run_test "Request body with 'stop' should return 503" \
-    "curl -s -X POST -H 'Host: $TEST_HOST' -H 'Content-Type: application/json' -d '{\"action\": \"stop\"}' $TRAEFIK_URL/ -w '%{http_code}' -o /dev/null | grep -q '503'" \
+    "curl -s -X POST -H \"Host: $TEST_HOST\" -H \"Content-Type: application/json\" -d '{\"action\": \"stop\"}' $TRAEFIK_URL/ -w '%{http_code}' -o /dev/null | grep -q '503'" \
     "Should return 503 when body contains 'stop'"
 
 # Test 8: Body processing without "stop" keyword  
