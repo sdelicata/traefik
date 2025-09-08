@@ -297,6 +297,10 @@ func ReadRequestBody(req *http.Request) ([]byte, error) {
 		return []byte{}, nil
 	}
 
+	// IMPORTANT: Preserve the Trailer header before reading body
+	// This tells Go's HTTP library which trailers to expect
+	declaredTrailers := req.Header.Get("Trailer")
+
 	// Read the body
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
@@ -306,8 +310,16 @@ func ReadRequestBody(req *http.Request) ([]byte, error) {
 	// Close the original body
 	req.Body.Close()
 
+	// After reading body, req.Trailer should be populated if trailers were sent
+	// This is automatic in Go's HTTP library when using chunked encoding
+
 	// Restore the body for downstream use
 	req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	// If trailers were declared but not populated, initialize the map
+	if declaredTrailers != "" && req.Trailer == nil {
+		req.Trailer = make(http.Header)
+	}
 
 	return bodyBytes, nil
 }
@@ -376,6 +388,148 @@ func validateProcessingResponse(resp *extprocv3.ProcessingResponse) error {
 	default:
 		return ErrUnknownResponseType
 	}
+}
+
+// HTTPRequestTrailersToProcessingRequest converts HTTP request trailers to a ProcessingRequest.
+func HTTPRequestTrailersToProcessingRequest(req *http.Request) (*extprocv3.ProcessingRequest, error) {
+	if req == nil {
+		return nil, ErrNilRequest
+	}
+
+	// Convert HTTP trailers to ext-proc headers
+	var trailers []*corev3.HeaderValue
+	for name, values := range req.Trailer {
+		for _, value := range values {
+			trailers = append(trailers, &corev3.HeaderValue{
+				Key:   strings.ToLower(name), // HTTP headers are case-insensitive
+				Value: value,
+			})
+		}
+	}
+
+	// Create the processing request for request trailers
+	procReq := &extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_RequestTrailers{
+			RequestTrailers: &extprocv3.HttpTrailers{
+				Trailers: &corev3.HeaderMap{
+					Headers: trailers,
+				},
+			},
+		},
+	}
+
+	return procReq, nil
+}
+
+// HTTPResponseTrailersToProcessingRequest converts HTTP response trailers to a ProcessingRequest.
+func HTTPResponseTrailersToProcessingRequest(rw http.ResponseWriter) (*extprocv3.ProcessingRequest, error) {
+	if rw == nil {
+		return nil, ErrNilResponseWriter
+	}
+
+	// Get trailers from response writer (if it implements http.Hijacker or has trailer support)
+	var trailers []*corev3.HeaderValue
+
+	// In HTTP/1.1, trailers are sent after the body. We need to check if the response has trailer support
+	// For now, we'll get trailers from the Trailer header field or any set trailers
+	if hijacker, ok := rw.(interface{ Trailer() http.Header }); ok {
+		for name, values := range hijacker.Trailer() {
+			for _, value := range values {
+				trailers = append(trailers, &corev3.HeaderValue{
+					Key:   strings.ToLower(name),
+					Value: value,
+				})
+			}
+		}
+	}
+
+	// Create the processing request for response trailers
+	procReq := &extprocv3.ProcessingRequest{
+		Request: &extprocv3.ProcessingRequest_ResponseTrailers{
+			ResponseTrailers: &extprocv3.HttpTrailers{
+				Trailers: &corev3.HeaderMap{
+					Headers: trailers,
+				},
+			},
+		},
+	}
+
+	return procReq, nil
+}
+
+// ApplyRequestTrailersMutations applies trailer mutations from ProcessingResponse to the HTTP request trailers.
+func ApplyRequestTrailersMutations(req *http.Request, resp *extprocv3.ProcessingResponse) error {
+	if req == nil || resp == nil {
+		return nil
+	}
+
+	// Extract header mutations from different response types
+	var headerMutation *extprocv3.HeaderMutation
+
+	switch r := resp.Response.(type) {
+	case *extprocv3.ProcessingResponse_RequestTrailers:
+		if r.RequestTrailers != nil && r.RequestTrailers.Response != nil {
+			headerMutation = r.RequestTrailers.Response.HeaderMutation
+		}
+	default:
+		return errors.New("unexpected response type for request trailers")
+	}
+
+	if headerMutation == nil {
+		return nil
+	}
+
+	// Apply header mutations to request trailers
+	// Note: req.Trailer might be nil, so we need to initialize it
+	if req.Trailer == nil {
+		req.Trailer = make(http.Header)
+	}
+	return applyHeaderMutations(req.Trailer, headerMutation)
+}
+
+// ApplyResponseTrailersMutations applies trailer mutations from ProcessingResponse to the HTTP response trailers.
+// NOTE: Following Envoy's approach, we don't pre-declare trailers in the Trailer header.
+// Trailers are sent directly with chunked encoding, which may not be fully HTTP/1.1 compliant
+// but works with modern HTTP clients and proxies.
+func ApplyResponseTrailersMutations(rw http.ResponseWriter, resp *extprocv3.ProcessingResponse) error {
+	if rw == nil || resp == nil {
+		return nil
+	}
+
+	// Extract header mutations from different response types
+	var headerMutation *extprocv3.HeaderMutation
+
+	switch r := resp.Response.(type) {
+	case *extprocv3.ProcessingResponse_ResponseTrailers:
+		if r.ResponseTrailers != nil && r.ResponseTrailers.Response != nil {
+			headerMutation = r.ResponseTrailers.Response.HeaderMutation
+		}
+	default:
+		return errors.New("unexpected response type for response trailers")
+	}
+
+	if headerMutation == nil {
+		return nil
+	}
+
+	// Apply mutations directly to the header map (trailers in Go)
+	// After the body is written, Header() is used for trailers in chunked encoding
+	for _, headerOption := range headerMutation.SetHeaders {
+		if headerOption.Header != nil {
+			if headerOption.Append != nil && headerOption.Append.Value {
+				rw.Header().Add(headerOption.Header.Key, headerOption.Header.Value)
+			} else {
+				rw.Header().Set(headerOption.Header.Key, headerOption.Header.Value)
+			}
+		}
+	}
+
+	// Remove trailers
+	for _, headerName := range headerMutation.RemoveHeaders {
+		rw.Header().Del(headerName)
+	}
+
+	return nil
 }
 
 // validateHeadersResponse validates a HeadersResponse.

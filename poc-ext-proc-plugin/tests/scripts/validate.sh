@@ -109,6 +109,24 @@ run_test "Multiple concurrent requests" \
     "for i in {1..5}; do curl -s -H 'X-Request-Header: concurrent-$i' -H 'Host: $TEST_HOST' $TRAEFIK_URL/ & done; wait" \
     "Should handle concurrent requests"
 
+# Test 10: Request Trailers Processing
+log_info "Test 10: Request Trailers Processing"
+run_test "Request with trailers processed correctly" \
+    "./scripts/trailer-client request-trailers | grep -q 'SUCCESS'" \
+    "Should add processed trailer to response"
+
+# Test 11: Response Trailers Processing  
+log_info "Test 11: Response Trailers Processing (HTTP/2)"
+run_test "Response trailers are processed" \
+    "./scripts/trailer-client-http2 response-trailers | grep -q 'SUCCESS'" \
+    "Should process response trailers"
+
+# Test 12: Trailers Mutation
+log_info "Test 12: Trailers Mutation (HTTP/2)"
+run_test "Trailers can be mutated by ext-proc" \
+    "./scripts/trailer-client-http2 trailers-mutation | grep -q 'SUCCESS'" \
+    "Should modify trailers based on ext-proc response"
+
 # Summary
 echo "==============================="
 echo "Validation Summary:"

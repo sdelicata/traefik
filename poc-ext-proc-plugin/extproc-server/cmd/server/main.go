@@ -15,6 +15,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"poc-ext-proc-plugin/extproc-server/pkg/extproc"
+	extprocv3 "poc-ext-proc-plugin/extproc-server/pkg/proto/envoy/service/ext_proc/v3"
 )
 
 func main() {

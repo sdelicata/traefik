@@ -873,4 +873,14 @@ type ProcessingMode struct {
 	// Values: "NONE", "STREAMED", "BUFFERED", "BUFFERED_PARTIAL"
 	// Default: "NONE"
 	ResponseBodyMode string `json:"responseBodyMode,omitempty" toml:"responseBodyMode,omitempty" yaml:"responseBodyMode,omitempty" export:"true"`
+
+	// RequestTrailersMode controls processing of request trailers.
+	// Values: "SKIP", "SEND"
+	// Default: "SKIP"
+	RequestTrailersMode string `json:"requestTrailersMode,omitempty" toml:"requestTrailersMode,omitempty" yaml:"requestTrailersMode,omitempty" export:"true"`
+
+	// ResponseTrailersMode controls processing of response trailers.
+	// Values: "SKIP", "SEND"
+	// Default: "SKIP"
+	ResponseTrailersMode string `json:"responseTrailersMode,omitempty" toml:"responseTrailersMode,omitempty" yaml:"responseTrailersMode,omitempty" export:"true"`
 }

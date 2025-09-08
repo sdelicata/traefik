@@ -17,6 +17,10 @@ entryPoints:
     address: ":80"
   websecure:
     address: ":443"
+    http2:
+      maxConcurrentStreams: 250
+    http3:
+      advertisedPort: 443
 
 # Providers
 providers:
@@ -24,11 +28,6 @@ providers:
   docker:
     endpoint: "unix:///var/run/docker.sock"
     exposedByDefault: false
-    watch: true
-    
-  # File provider for dynamic configuration
-  file:
-    filename: /etc/traefik/dynamic.yml
     watch: true
 
 # Logging
@@ -46,6 +45,17 @@ accessLog:
       names:
         X-Request-Header: keep
         X-Response-Header: keep
+
+# TLS configuration
+tls:
+  certificates:
+    - certFile: /etc/traefik/localhost.cert
+      keyFile: /etc/traefik/localhost.key
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/localhost.cert
+        keyFile: /etc/traefik/localhost.key
 
 # Metrics (optional - for monitoring)
 metrics:
