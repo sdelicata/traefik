@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strings"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	processingmodev3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
 	"github.com/traefik/traefik/v3/pkg/config/dynamic"
-	corev3 "github.com/traefik/traefik/v3/pkg/proto/envoy/config/core/v3"
-	processingmodev3 "github.com/traefik/traefik/v3/pkg/proto/envoy/extensions/filters/http/ext_proc/v3"
-	extprocv3 "github.com/traefik/traefik/v3/pkg/proto/envoy/service/ext_proc/v3"
 )
 
 // HTTPRequestToProcessingRequest converts an HTTP request to a ProcessingRequest.
@@ -53,7 +53,7 @@ func HTTPRequestToProcessingRequest(req *http.Request, config *dynamic.ExtProc) 
 	)
 
 	// Convert configuration to protocol configuration
-	var requestBodyMode, responseBodyMode processingmodev3.BodySendMode
+	var requestBodyMode, responseBodyMode processingmodev3.ProcessingMode_BodySendMode
 	var err error
 
 	if config != nil && config.ProcessingMode != nil {
@@ -68,8 +68,8 @@ func HTTPRequestToProcessingRequest(req *http.Request, config *dynamic.ExtProc) 
 		}
 	} else {
 		// Default values when no config is provided
-		requestBodyMode = processingmodev3.BodySendMode_NONE
-		responseBodyMode = processingmodev3.BodySendMode_NONE
+		requestBodyMode = processingmodev3.ProcessingMode_NONE
+		responseBodyMode = processingmodev3.ProcessingMode_NONE
 	}
 
 	// Create the processing request
@@ -341,20 +341,20 @@ func HTTPRequestBodyToProcessingRequest(bodyBytes []byte) (*extprocv3.Processing
 
 // stringToBodySendMode converts a string to BodySendMode enum.
 // Returns an error for invalid values since config validation should happen upstream.
-func stringToBodySendMode(mode string) (processingmodev3.BodySendMode, error) {
+func stringToBodySendMode(mode string) (processingmodev3.ProcessingMode_BodySendMode, error) {
 	switch mode {
 	case "BUFFERED":
-		return processingmodev3.BodySendMode_BUFFERED, nil
+		return processingmodev3.ProcessingMode_BUFFERED, nil
 	case "STREAMED":
-		return processingmodev3.BodySendMode_STREAMED, nil
+		return processingmodev3.ProcessingMode_STREAMED, nil
 	case "BUFFERED_PARTIAL":
-		return processingmodev3.BodySendMode_BUFFERED_PARTIAL, nil
+		return processingmodev3.ProcessingMode_BUFFERED_PARTIAL, nil
 	case "FULL_DUPLEX_STREAMED":
-		return processingmodev3.BodySendMode_FULL_DUPLEX_STREAMED, nil
+		return processingmodev3.ProcessingMode_FULL_DUPLEX_STREAMED, nil
 	case "NONE", "":
-		return processingmodev3.BodySendMode_NONE, nil
+		return processingmodev3.ProcessingMode_NONE, nil
 	default:
-		return processingmodev3.BodySendMode_NONE, fmt.Errorf("invalid BodySendMode: %s", mode)
+		return processingmodev3.ProcessingMode_NONE, fmt.Errorf("invalid BodySendMode: %s", mode)
 	}
 }
 
@@ -468,8 +468,8 @@ func ApplyRequestTrailersMutations(req *http.Request, resp *extprocv3.Processing
 
 	switch r := resp.Response.(type) {
 	case *extprocv3.ProcessingResponse_RequestTrailers:
-		if r.RequestTrailers != nil && r.RequestTrailers.Response != nil {
-			headerMutation = r.RequestTrailers.Response.HeaderMutation
+		if r.RequestTrailers != nil {
+			headerMutation = r.RequestTrailers.HeaderMutation
 		}
 	default:
 		return errors.New("unexpected response type for request trailers")
@@ -501,8 +501,8 @@ func ApplyResponseTrailersMutations(rw http.ResponseWriter, resp *extprocv3.Proc
 
 	switch r := resp.Response.(type) {
 	case *extprocv3.ProcessingResponse_ResponseTrailers:
-		if r.ResponseTrailers != nil && r.ResponseTrailers.Response != nil {
-			headerMutation = r.ResponseTrailers.Response.HeaderMutation
+		if r.ResponseTrailers != nil {
+			headerMutation = r.ResponseTrailers.HeaderMutation
 		}
 	default:
 		return errors.New("unexpected response type for response trailers")

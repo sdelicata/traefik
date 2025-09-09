@@ -6,12 +6,12 @@ import (
 	"strings"
 	"sync"
 
+	corev3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
+	processingmodev3 "github.com/envoyproxy/go-control-plane/envoy/extensions/filters/http/ext_proc/v3"
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	typev3 "github.com/envoyproxy/go-control-plane/envoy/type/v3"
 	"github.com/rs/zerolog"
 	"google.golang.org/protobuf/types/known/wrapperspb"
-	corev3 "poc-ext-proc-plugin/extproc-server/pkg/proto/envoy/config/core/v3"
-	processingmodev3 "poc-ext-proc-plugin/extproc-server/pkg/proto/envoy/extensions/filters/http/ext_proc/v3"
-	extprocv3 "poc-ext-proc-plugin/extproc-server/pkg/proto/envoy/service/ext_proc/v3"
-	typev3 "poc-ext-proc-plugin/extproc-server/pkg/proto/envoy/type/v3"
 )
 
 // Server implements the external processing server
@@ -280,6 +280,8 @@ func (s *Server) handleResponseHeaders(streamCtx *streamContext, respHeaders *ex
 		Str("stream_id", streamCtx.requestID).
 		Msg("Processing response headers")
 
+	// FIXME: respHeaders is overriden.
+
 	// Read extracted value from streamCtx (stream-based correlation)
 	streamCtx.mutex.RLock()
 	extractedValue := streamCtx.extractedValue
@@ -353,7 +355,7 @@ func (s *Server) handleRequestBody(streamCtx *streamContext, requestBody *extpro
 	streamCtx.mutex.RUnlock()
 
 	// Check if body processing should be skipped
-	if protocolConfig != nil && protocolConfig.RequestBodyMode == processingmodev3.BodySendMode_NONE {
+	if protocolConfig != nil && protocolConfig.RequestBodyMode == processingmodev3.ProcessingMode_NONE {
 		s.logger.Debug().
 			Str("stream_id", streamCtx.requestID).
 			Msg("Body processing skipped - mode NONE")
@@ -369,12 +371,12 @@ func (s *Server) handleRequestBody(streamCtx *streamContext, requestBody *extpro
 	// Handle different body modes
 	if protocolConfig != nil {
 		switch protocolConfig.RequestBodyMode {
-		case processingmodev3.BodySendMode_STREAMED:
+		case processingmodev3.ProcessingMode_STREAMED:
 			s.logger.Debug().
 				Str("stream_id", streamCtx.requestID).
 				Msg("Processing request body in STREAMED mode (treated as buffered for now)")
 			// For now, treat streamed as buffered
-		case processingmodev3.BodySendMode_BUFFERED_PARTIAL:
+		case processingmodev3.ProcessingMode_BUFFERED_PARTIAL:
 			s.logger.Debug().
 				Str("stream_id", streamCtx.requestID).
 				Msg("Processing request body in BUFFERED_PARTIAL mode")
@@ -403,7 +405,7 @@ func (s *Server) handleRequestBody(streamCtx *streamContext, requestBody *extpro
 					Status: &typev3.HttpStatus{
 						Code: 503, // Service Unavailable
 					},
-					Body: "Service temporarily unavailable - stop keyword detected",
+					Body: []byte("Service temporarily unavailable - stop keyword detected"),
 				},
 			},
 		}
@@ -438,16 +440,16 @@ func (s *Server) validateProtocolConfiguration(config *extprocv3.ProtocolConfigu
 
 	// Check supported request body modes
 	switch config.RequestBodyMode {
-	case processingmodev3.BodySendMode_NONE:
+	case processingmodev3.ProcessingMode_NONE:
 		s.logger.Debug().Msg("Request body mode: NONE - no body processing")
-	case processingmodev3.BodySendMode_BUFFERED:
+	case processingmodev3.ProcessingMode_BUFFERED:
 		s.logger.Debug().Msg("Request body mode: BUFFERED - full body buffered (supported)")
-	case processingmodev3.BodySendMode_STREAMED:
+	case processingmodev3.ProcessingMode_STREAMED:
 		s.logger.Warn().Msg("Request body mode: STREAMED - streaming not fully implemented")
 		// For now, we'll accept it but treat it as buffered
-	case processingmodev3.BodySendMode_BUFFERED_PARTIAL:
+	case processingmodev3.ProcessingMode_BUFFERED_PARTIAL:
 		s.logger.Debug().Msg("Request body mode: BUFFERED_PARTIAL - treating as buffered")
-	case processingmodev3.BodySendMode_FULL_DUPLEX_STREAMED:
+	case processingmodev3.ProcessingMode_FULL_DUPLEX_STREAMED:
 		s.logger.Error().Msg("Request body mode: FULL_DUPLEX_STREAMED - not supported")
 		return fmt.Errorf("unsupported request body mode: FULL_DUPLEX_STREAMED")
 	default:
@@ -456,17 +458,17 @@ func (s *Server) validateProtocolConfiguration(config *extprocv3.ProtocolConfigu
 
 	// Check supported response body modes
 	switch config.ResponseBodyMode {
-	case processingmodev3.BodySendMode_NONE:
+	case processingmodev3.ProcessingMode_NONE:
 		s.logger.Debug().Msg("Response body mode: NONE - no response body processing (supported)")
-	case processingmodev3.BodySendMode_BUFFERED:
+	case processingmodev3.ProcessingMode_BUFFERED:
 		s.logger.Debug().Msg("Response body mode: BUFFERED - full response body buffered")
-	case processingmodev3.BodySendMode_STREAMED:
+	case processingmodev3.ProcessingMode_STREAMED:
 		s.logger.Warn().Msg("Response body mode: STREAMED - streaming not implemented")
 		return fmt.Errorf("unsupported response body mode: STREAMED")
-	case processingmodev3.BodySendMode_BUFFERED_PARTIAL:
+	case processingmodev3.ProcessingMode_BUFFERED_PARTIAL:
 		s.logger.Warn().Msg("Response body mode: BUFFERED_PARTIAL - not implemented")
 		return fmt.Errorf("unsupported response body mode: BUFFERED_PARTIAL")
-	case processingmodev3.BodySendMode_FULL_DUPLEX_STREAMED:
+	case processingmodev3.ProcessingMode_FULL_DUPLEX_STREAMED:
 		s.logger.Error().Msg("Response body mode: FULL_DUPLEX_STREAMED - not supported")
 		return fmt.Errorf("unsupported response body mode: FULL_DUPLEX_STREAMED")
 	default:
@@ -550,26 +552,15 @@ func (s *Server) handleRequestTrailers(streamCtx *streamContext, reqTrailers *ex
 
 		return &extprocv3.ProcessingResponse{
 			Response: &extprocv3.ProcessingResponse_RequestTrailers{
-				RequestTrailers: &extprocv3.HeadersResponse{
-					Response: &extprocv3.CommonResponse{
-						Status:         extprocv3.CommonResponse_CONTINUE,
-						HeaderMutation: headerMutation,
-					},
+				RequestTrailers: &extprocv3.TrailersResponse{
+					HeaderMutation: headerMutation,
 				},
 			},
 		}
 	}
 
 	// No special processing needed, just continue
-	return &extprocv3.ProcessingResponse{
-		Response: &extprocv3.ProcessingResponse_RequestTrailers{
-			RequestTrailers: &extprocv3.HeadersResponse{
-				Response: &extprocv3.CommonResponse{
-					Status: extprocv3.CommonResponse_CONTINUE,
-				},
-			},
-		},
-	}
+	return nil
 }
 
 // handleResponseTrailers processes response trailers
@@ -618,24 +609,13 @@ func (s *Server) handleResponseTrailers(streamCtx *streamContext, respTrailers *
 
 		return &extprocv3.ProcessingResponse{
 			Response: &extprocv3.ProcessingResponse_ResponseTrailers{
-				ResponseTrailers: &extprocv3.HeadersResponse{
-					Response: &extprocv3.CommonResponse{
-						Status:         extprocv3.CommonResponse_CONTINUE,
-						HeaderMutation: headerMutation,
-					},
+				ResponseTrailers: &extprocv3.TrailersResponse{
+					HeaderMutation: headerMutation,
 				},
 			},
 		}
 	}
 
 	// No special processing needed, just continue
-	return &extprocv3.ProcessingResponse{
-		Response: &extprocv3.ProcessingResponse_ResponseTrailers{
-			ResponseTrailers: &extprocv3.HeadersResponse{
-				Response: &extprocv3.CommonResponse{
-					Status: extprocv3.CommonResponse_CONTINUE,
-				},
-			},
-		},
-	}
+	return nil
 }

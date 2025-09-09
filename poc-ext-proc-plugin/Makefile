@@ -122,7 +122,7 @@ traefik-restart: traefik-build ## Restart Traefik service only
 	@echo "✅ Traefik restarted"
 
 extproc-build: ## Build ext-proc server only
-	@echo "🔨 Building ext-proc server with proto generation..."
+	@echo "🔨 Building ext-proc server..."
 	docker-compose -f $(COMPOSE_FILE) -f $(OVERRIDE_FILE) build extproc-plugin
 
 extproc-restart: extproc-build ## Restart ext-proc server only
@@ -251,22 +251,3 @@ dev-extproc: ## Development workflow for ext-proc server changes
 	@$(MAKE) test
 	@echo "✅ ext-proc development cycle completed"
 
-# Proto management targets
-proto-check: ## Check if ext-proc proto sources are synchronized with Traefik
-	@echo "🔍 Checking proto source synchronization..."
-	@cd extproc-server && make proto-check
-
-proto-update: ## Update ext-proc proto sources from Traefik
-	@echo "🔄 Updating proto sources from Traefik..."
-	@cd extproc-server && make proto-update
-	@echo "✅ Proto sources updated. You may need to rebuild with 'make extproc-build'"
-
-proto-generate: ## Generate protobuf stubs locally (for development)
-	@echo "🔧 Generating protobuf stubs locally..."
-	@cd extproc-server && make generate-proto
-	@echo "✅ Proto stubs generated locally"
-
-proto-clean: ## Clean generated protobuf files
-	@echo "🧹 Cleaning generated protobuf files..."
-	@cd extproc-server && make clean-proto
-	@echo "✅ Proto files cleaned"

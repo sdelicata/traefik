@@ -14,8 +14,8 @@ import (
 	"google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/grpc/reflection"
 
-	"poc-ext-proc-plugin/extproc-server/pkg/extproc"
-	extprocv3 "poc-ext-proc-plugin/extproc-server/pkg/proto/envoy/service/ext_proc/v3"
+	extprocv3 "github.com/envoyproxy/go-control-plane/envoy/service/ext_proc/v3"
+	
 )
 
 func main() {

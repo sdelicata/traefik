@@ -1,12 +1,8 @@
 # Multi-stage build for ext-proc gRPC server
 FROM golang:1.24-alpine AS builder
 
-# Install build dependencies including protoc, make, and Go proto generators
-RUN apk add --no-cache git ca-certificates protoc make protobuf-dev
-
-# Install Go protobuf generators
-RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+# Install build dependencies
+RUN apk add --no-cache git ca-certificates
 
 WORKDIR /app
 
@@ -14,11 +10,8 @@ WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source code and Makefile
+# Copy source code
 COPY . .
-
-# Generate protobuf stubs from existing .proto sources
-RUN make generate-proto-docker
 
 # Build the server
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
