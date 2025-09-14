@@ -1,0 +1,121 @@
+# Consolidated Router Configuration Error Tests
+# This configuration tests various error conditions:
+# - Circular dependency detection (2, 3, 4 router loops)
+# - Invalid parent references (non-existent parents)
+
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+
+[api]
+  dashboard = true
+  debug = true
+
+# Test Services for all circular dependency scenarios
+[http.services]
+  # Services for 2-router circular dependency test
+  [http.services.service-a.loadBalancer]
+    [[http.services.service-a.loadBalancer.servers]]
+      url = "http://127.0.0.1:8001"
+
+  [http.services.service-b.loadBalancer]
+    [[http.services.service-b.loadBalancer.servers]]
+      url = "http://127.0.0.1:8002"
+
+  # Additional services for 3-router circular dependency test
+  [http.services.service-c.loadBalancer]
+    [[http.services.service-c.loadBalancer.servers]]
+      url = "http://127.0.0.1:8003"
+
+  # Additional services for 4-router circular dependency test
+  [http.services.service-d.loadBalancer]
+    [[http.services.service-d.loadBalancer.servers]]
+      url = "http://127.0.0.1:8004"
+
+  # Services for invalid parent reference tests
+  [http.services.invalid-child-service.loadBalancer]
+    [[http.services.invalid-child-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:8005"
+
+  [http.services.valid-parent-service.loadBalancer]
+    [[http.services.valid-parent-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:8006"
+
+# Router configurations demonstrating different levels of circular dependencies
+# NOTE: These routers are intentionally misconfigured to test error handling
+[http.routers]
+  # 2-Router Circular Dependency Test: router-2a ↔ router-2b
+  [http.routers.router-2a]
+    entryPoints = ["web"]
+    parentRefs = ["router-2b"]  # Creates 2-router circular dependency
+    rule = "Host(`2a.example.com`)"
+    service = "service-a"
+
+  [http.routers.router-2b]
+    entryPoints = ["web"]
+    parentRefs = ["router-2a"]  # Completes 2-router circular dependency
+    rule = "Host(`2b.example.com`)"
+    service = "service-b"
+
+  # 3-Router Circular Dependency Test: router-3a → router-3b → router-3c → router-3a
+  [http.routers.router-3a]
+    entryPoints = ["web"]
+    parentRefs = ["router-3c"]  # Creates 3-router circular dependency
+    rule = "Host(`3a.example.com`)"
+    service = "service-a"
+
+  [http.routers.router-3b]
+    entryPoints = ["web"]
+    parentRefs = ["router-3a"]
+    rule = "Host(`3b.example.com`)"
+    service = "service-b"
+
+  [http.routers.router-3c]
+    entryPoints = ["web"]
+    parentRefs = ["router-3b"]  # Completes 3-router circular dependency
+    rule = "Host(`3c.example.com`)"
+    service = "service-c"
+
+  # 4-Router Circular Dependency Test: router-4a → router-4b → router-4c → router-4d → router-4a
+  [http.routers.router-4a]
+    entryPoints = ["web"]
+    parentRefs = ["router-4d"]  # Creates 4-router circular dependency (exceeds 3-loop limit)
+    rule = "Host(`4a.example.com`)"
+    service = "service-a"
+
+  [http.routers.router-4b]
+    entryPoints = ["web"]
+    parentRefs = ["router-4a"]
+    rule = "Host(`4b.example.com`)"
+    service = "service-b"
+
+  [http.routers.router-4c]
+    entryPoints = ["web"]
+    parentRefs = ["router-4b"]
+    rule = "Host(`4c.example.com`)"
+    service = "service-c"
+
+  [http.routers.router-4d]
+    entryPoints = ["web"]
+    parentRefs = ["router-4c"]  # Completes 4-router circular dependency
+    rule = "Host(`4d.example.com`)"
+    service = "service-d"
+
+  # Invalid Parent Reference Tests
+  # Valid parent router for reference
+  [http.routers.valid-parent]
+    entryPoints = ["web"]
+    rule = "Host(`valid.example.com`)"
+    service = "valid-parent-service"
+
+  # Child with completely invalid parent reference
+  [http.routers.invalid-child]
+    parentRefs = ["non-existent-parent"]  # This parent doesn't exist - should cause error
+    rule = "Path(`/invalid`)"
+    service = "invalid-child-service"
+
+  # Child with mix of valid and invalid parent references
+  [http.routers.mixed-invalid-child]
+    parentRefs = ["valid-parent", "another-non-existent-parent"]  # Mixed validity - should cause error
+    rule = "Path(`/mixed-invalid`)"
+    service = "invalid-child-service"

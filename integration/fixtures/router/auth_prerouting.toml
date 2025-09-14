@@ -1,4 +1,5 @@
 # Authentication Pre-routing Test Configuration
+# Comprehensive test including authentication, middleware inheritance, and header-based routing
 # Based on quickstart example - tests authentication middleware applied at parent level
 
 [entryPoints]
@@ -25,6 +26,15 @@
     [[http.services.public-service.loadBalancer.servers]]
       url = "http://127.0.0.1:3002"
 
+  # Additional services for header-based routing tests
+  [http.services.header-admin-service.loadBalancer]
+    [[http.services.header-admin-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:3003"
+
+  [http.services.header-user-service.loadBalancer]
+    [[http.services.header-user-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:3004"
+
 # Middleware definitions
 [http.middlewares]
   [http.middlewares.auth.basicAuth]
@@ -35,6 +45,14 @@
 
   [http.middlewares.admin-only.headers.customRequestHeaders]
     X-Admin = "true"
+
+  # Header-based routing middleware
+  [http.middlewares.add-auth-headers.headers.customRequestHeaders]
+    X-User-Role = "admin"
+    X-Auth-Status = "authenticated"
+
+  [http.middlewares.log-headers.headers.customRequestHeaders]
+    X-Processed = "true"
 
 # Router tree
 [http.routers]
@@ -63,3 +81,23 @@
     entryPoints = ["web"]
     rule = "Host(`public.example.com`)"
     service = "public-service"
+
+  # Header-based routing test section
+  # Parent router that adds headers for child routing decisions
+  [http.routers.header-auth-parent]
+    entryPoints = ["web"]
+    rule = "Host(`header.example.com`)"
+    middlewares = ["add-auth-headers"]
+
+  # Child router using header added by parent for admin routing
+  [http.routers.header-admin-child]
+    parentRefs = ["header-auth-parent"]
+    rule = "Header(`X-User-Role`, `admin`)"
+    middlewares = ["log-headers"]
+    service = "header-admin-service"
+
+  # Child router for user routing based on headers
+  [http.routers.header-user-child]
+    parentRefs = ["header-auth-parent"]
+    rule = "Header(`X-User-Role`, `user`)"
+    service = "header-user-service"

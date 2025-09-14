@@ -1,11 +1,13 @@
 package http
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/containous/alice"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/traefik/traefik/v3/pkg/config/dynamic"
@@ -13,7 +15,39 @@ import (
 	"github.com/traefik/traefik/v3/pkg/testhelpers"
 )
 
-// mockMiddlewareBuilder is defined in middleware_integration_test.go
+// mockMiddlewareBuilder implements MiddlewareBuilder for testing
+type mockMiddlewareBuilder struct{}
+
+func (m *mockMiddlewareBuilder) BuildChain(ctx context.Context, middlewareNames []string) *alice.Chain {
+	chain := alice.New()
+	for _, name := range middlewareNames {
+		switch name {
+		case "auth":
+			chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					r.Header.Set("X-User-Role", "admin")
+					r.Header.Set("X-Auth-Status", "authenticated")
+					next.ServeHTTP(w, r)
+				}), nil
+			})
+		case "api-headers":
+			chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					r.Header.Set("X-API-Version", "v1")
+					next.ServeHTTP(w, r)
+				}), nil
+			})
+		case "log-headers":
+			chain = chain.Append(func(next http.Handler) (http.Handler, error) {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					r.Header.Set("X-Processed", "true")
+					next.ServeHTTP(w, r)
+				}), nil
+			})
+		}
+	}
+	return &chain
+}
 
 // newTestRequestWithCanonicalHost creates a test request with proper canonical host context
 // Simpler version for matcher tests that don't need complex middleware
