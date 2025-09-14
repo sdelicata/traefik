@@ -1,6 +1,8 @@
 {
 	"ipWhiteList": {
-		"sourceRange": ["127.0.0.1/32"]
+		"sourceRange": [
+			"127.0.0.1/32"
+		]
 	},
 	"name": "foo / bar@myprovider",
 	"provider": "myprovider",

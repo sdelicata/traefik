@@ -1046,6 +1046,112 @@ func TestHandler_HTTP(t *testing.T) {
 	}
 }
 
+func TestHandler_HTTP_RouterTree(t *testing.T) {
+	testCases := []struct {
+		desc     string
+		path     string
+		conf     runtime.Configuration
+		expected map[string]map[string]interface{}
+	}{
+		{
+			desc: "routers with tree information",
+			path: "/api/http/routers",
+			conf: runtime.Configuration{
+				Routers: map[string]*runtime.RouterInfo{
+					"parent@myprovider": {
+						Router: &dynamic.Router{
+							EntryPoints: []string{"web"},
+							Service:     "parent-service@myprovider",
+							Rule:        "Host(`parent.example.com`)",
+							Middlewares: []string{"auth"},
+						},
+						Status:               runtime.StatusEnabled,
+						Parents:              []string{}, // Will be omitted due to omitempty
+						Children:             []string{"child@myprovider"},
+						Depth:                0, // Will always be included
+						EffectiveMiddlewares: []string{"auth"},
+					},
+					"child@myprovider": {
+						Router: &dynamic.Router{
+							EntryPoints: []string{"web"},
+							Service:     "child-service@myprovider",
+							Rule:        "Host(`child.example.com`)",
+							Middlewares: []string{"addPrefixTest"},
+							ParentRefs:  []string{"parent@myprovider"},
+						},
+						Status:               runtime.StatusEnabled,
+						Parents:              []string{"parent@myprovider"},
+						Children:             []string{}, // Will be omitted due to omitempty
+						Depth:                1,
+						EffectiveMiddlewares: []string{"auth", "addPrefixTest"},
+					},
+				},
+			},
+			expected: map[string]map[string]interface{}{
+				"parent@myprovider": {
+					"children":             []interface{}{"child@myprovider"},
+					"depth":                float64(0),
+					"effectiveMiddlewares": []interface{}{"auth"},
+				},
+				"child@myprovider": {
+					"parents":              []interface{}{"parent@myprovider"},
+					"depth":                float64(1),
+					"effectiveMiddlewares": []interface{}{"auth", "addPrefixTest"},
+				},
+			},
+		},
+	}
+
+	for _, test := range testCases {
+		t.Run(test.desc, func(t *testing.T) {
+			t.Parallel()
+
+			rtConf := &test.conf
+			// To lazily initialize the Statuses.
+			rtConf.PopulateUsedBy()
+			rtConf.GetRoutersByEntryPoints(t.Context(), []string{"web"}, false)
+
+			handler := New(static.Configuration{API: &static.API{}, Global: &static.Global{}}, rtConf)
+			server := httptest.NewServer(handler.createRouter())
+
+			resp, err := http.DefaultClient.Get(server.URL + test.path)
+			require.NoError(t, err)
+			require.Equal(t, http.StatusOK, resp.StatusCode)
+
+			var routers []map[string]interface{}
+			contents, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			err = json.Unmarshal(contents, &routers)
+			require.NoError(t, err)
+
+			// Convert response to map by router name for easier assertions
+			routerMap := make(map[string]map[string]interface{})
+			for _, router := range routers {
+				name, ok := router["name"].(string)
+				require.True(t, ok, "Router should have a name field")
+				routerMap[name] = router
+			}
+
+			// Check that tree fields are present and have expected values
+			for routerName, expectedFields := range test.expected {
+				router, exists := routerMap[routerName]
+				require.True(t, exists, "Router %s should exist in response", routerName)
+
+				// Check each tree field
+				for field, expectedValue := range expectedFields {
+					actualValue, exists := router[field]
+					require.True(t, exists, "Router %s should have field %s", routerName, field)
+					assert.Equal(t, expectedValue, actualValue, "Router %s field %s should match expected", routerName, field)
+				}
+
+				// Verify depth always exists (since we removed omitempty)
+				_, depthExists := router["depth"]
+				assert.True(t, depthExists, "Router %s should always have depth field", routerName)
+			}
+		})
+	}
+}
+
 func generateHTTPRouters(nbRouters int) map[string]*runtime.RouterInfo {
 	routers := make(map[string]*runtime.RouterInfo, nbRouters)
 	for i := range nbRouters {

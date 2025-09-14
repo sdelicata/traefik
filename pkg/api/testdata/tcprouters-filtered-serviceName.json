@@ -21,11 +21,11 @@
 		"rule": "Host(`foo.bar.other`)",
 		"service": "foo-service@myprovider",
 		"status": "enabled",
-		"using": [
-			"web"
-		],
 		"tls": {
 			"passthrough": false
-		}
+		},
+		"using": [
+			"web"
+		]
 	}
 ]

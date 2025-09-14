@@ -11,6 +11,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/rs/zerolog/log"
+	"github.com/traefik/traefik/v3/pkg/config/dynamic"
 	"github.com/traefik/traefik/v3/pkg/rules"
 )
 
@@ -22,9 +23,11 @@ type MatcherFunc func(*http.Request) bool
 
 // Muxer handles routing with rules.
 type Muxer struct {
-	routes         routes
-	parser         SyntaxParser
-	defaultHandler http.Handler
+	routes              routes
+	parser              SyntaxParser
+	defaultHandler      http.Handler
+	hierarchicalEngine  *HierarchicalEvaluationEngine // Optional hierarchical evaluation engine
+	useHierarchicalEval bool                          // Flag to enable hierarchical evaluation
 }
 
 // NewMuxer returns a new muxer instance.
@@ -48,6 +51,15 @@ func (m *Muxer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	// Use hierarchical evaluation if available and enabled
+	if m.useHierarchicalEval && m.hierarchicalEngine != nil {
+		if matchedRouter, found := m.hierarchicalEngine.EvaluateRequest(req); found {
+			matchedRouter.Handler.ServeHTTP(rw, req)
+			return
+		}
+	}
+
+	// Fall back to traditional flat routing if hierarchical evaluation disabled or no hierarchical match found
 	for _, route := range m.routes {
 		if route.matchers.match(req) {
 			route.handler.ServeHTTP(rw, req)
@@ -61,6 +73,37 @@ func (m *Muxer) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
 // SetDefaultHandler sets the muxer default handler.
 func (m *Muxer) SetDefaultHandler(handler http.Handler) {
 	m.defaultHandler = handler
+}
+
+// EnableHierarchicalEvaluation enables hierarchical route evaluation for performance optimization
+func (m *Muxer) EnableHierarchicalEvaluation() {
+	if m.hierarchicalEngine == nil {
+		m.hierarchicalEngine = NewHierarchicalEvaluationEngine(m.parser)
+	}
+	m.useHierarchicalEval = true
+}
+
+// DisableHierarchicalEvaluation disables hierarchical route evaluation, falling back to flat routing
+func (m *Muxer) DisableHierarchicalEvaluation() {
+	m.useHierarchicalEval = false
+}
+
+// SetHierarchicalRoutes configures the hierarchical evaluation engine with router configurations
+func (m *Muxer) SetHierarchicalRoutes(routerConfigs map[string]*dynamic.Router, handlers map[string]http.Handler) error {
+	if m.hierarchicalEngine == nil {
+		return fmt.Errorf("hierarchical evaluation engine not initialized")
+	}
+	return m.hierarchicalEngine.BuildHierarchy(routerConfigs, handlers)
+}
+
+// GetHierarchicalEngine returns the hierarchical evaluation engine for advanced configuration
+func (m *Muxer) GetHierarchicalEngine() *HierarchicalEvaluationEngine {
+	return m.hierarchicalEngine
+}
+
+// IsHierarchicalEvaluationEnabled returns true if hierarchical evaluation is currently enabled
+func (m *Muxer) IsHierarchicalEvaluationEnabled() bool {
+	return m.useHierarchicalEval && m.hierarchicalEngine != nil
 }
 
 // GetRulePriority computes the priority for a given rule.

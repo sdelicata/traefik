@@ -110,6 +110,9 @@ func NewConfig(conf dynamic.Configuration) *Configuration {
 		}
 	}
 
+	// Validate router parentRefs after all routers are created
+	validateRouterParentRefs(runtimeConfig)
+
 	return runtimeConfig
 }
 
@@ -245,4 +248,25 @@ func getQualifiedName(provider, elementName string) string {
 		return elementName + "@" + provider
 	}
 	return elementName
+}
+
+// PopulateRouterTreeInfo populates tree metadata for RouterInfos
+// This function is intended to be called from the server package to avoid import cycles
+func PopulateRouterTreeInfo(routerInfos map[string]*RouterInfo, treeData map[string]TreeData) {
+	for name, info := range routerInfos {
+		if data, exists := treeData[name]; exists {
+			info.Parents = data.Parents
+			info.Children = data.Children
+			info.Depth = data.Depth
+			info.EffectiveMiddlewares = data.EffectiveMiddlewares
+		}
+	}
+}
+
+// TreeData contains tree information for a router
+type TreeData struct {
+	Parents              []string
+	Children             []string
+	Depth                int
+	EffectiveMiddlewares []string
 }

@@ -55,6 +55,20 @@ const (
 	DefaultUDPTimeout = 3 * time.Second
 )
 
+// HierarchicalRouting contains configuration for hierarchical router optimization.
+// T039: Static configuration for hierarchical performance optimization.
+type HierarchicalRouting struct {
+	// EnableOptimization controls whether hierarchical optimization is enabled.
+	// If not set, optimization is auto-enabled when parentRefs are detected.
+	EnableOptimization *bool `description:"Enable hierarchical optimization. Auto-detected by default." json:"enableOptimization,omitempty" toml:"enableOptimization,omitempty" yaml:"enableOptimization,omitempty" export:"true"`
+
+	// FallbackToFlat enables fallback to flat routing if hierarchical optimization fails.
+	FallbackToFlat *bool `description:"Enable fallback to flat routing on hierarchical optimization failure." json:"fallbackToFlat,omitempty" toml:"fallbackToFlat,omitempty" yaml:"fallbackToFlat,omitempty" export:"true"`
+
+	// MinRoutersForOptimization minimum number of routers before enabling optimization.
+	MinRoutersForOptimization *int `description:"Minimum number of routers required before enabling optimization." json:"minRoutersForOptimization,omitempty" toml:"minRoutersForOptimization,omitempty" yaml:"minRoutersForOptimization,omitempty" export:"true"`
+}
+
 // Configuration is the static configuration.
 type Configuration struct {
 	Global *Global `description:"Global configuration options" json:"global,omitempty" toml:"global,omitempty" yaml:"global,omitempty" export:"true"`
@@ -63,6 +77,9 @@ type Configuration struct {
 	TCPServersTransport *TCPServersTransport `description:"TCP servers default transport." json:"tcpServersTransport,omitempty" toml:"tcpServersTransport,omitempty" yaml:"tcpServersTransport,omitempty" export:"true"`
 	EntryPoints         EntryPoints          `description:"Entry points definition." json:"entryPoints,omitempty" toml:"entryPoints,omitempty" yaml:"entryPoints,omitempty" export:"true"`
 	Providers           *Providers           `description:"Providers configuration." json:"providers,omitempty" toml:"providers,omitempty" yaml:"providers,omitempty" export:"true"`
+
+	// T039: Hierarchical routing configuration for performance optimization
+	HierarchicalRouting *HierarchicalRouting `description:"Hierarchical routing configuration for performance optimization." json:"hierarchicalRouting,omitempty" toml:"hierarchicalRouting,omitempty" yaml:"hierarchicalRouting,omitempty" export:"true"`
 
 	API     *API           `description:"Enable api/dashboard." json:"api,omitempty" toml:"api,omitempty" yaml:"api,omitempty" label:"allowEmpty" file:"allowEmpty" export:"true"`
 	Metrics *types.Metrics `description:"Enable a metrics exporter." json:"metrics,omitempty" toml:"metrics,omitempty" yaml:"metrics,omitempty" export:"true"`

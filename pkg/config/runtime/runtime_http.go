@@ -80,6 +80,12 @@ type RouterInfo struct {
 	// It is the caller's responsibility to set the initial status.
 	Status string   `json:"status,omitempty"`
 	Using  []string `json:"using,omitempty"` // Effective entry points used by that router.
+
+	// Tree metadata
+	Parents              []string `json:"parents,omitempty"`              // Parent router names
+	Children             []string `json:"children,omitempty"`             // Child router names
+	Depth                int      `json:"depth"`                          // Depth in tree (0 = root) - always include
+	EffectiveMiddlewares []string `json:"effectiveMiddlewares,omitempty"` // Inherited + own middlewares
 }
 
 // AddError adds err to r.Err, if it does not already exist.
@@ -196,4 +202,39 @@ func (s *ServiceInfo) GetAllStatus() map[string]string {
 		allStatus[k] = v
 	}
 	return allStatus
+}
+
+// validateRouterParentRefs validates parentRefs field in router configurations
+// It ensures that:
+// - All referenced parent routers exist
+// - Routers don't reference themselves as parents
+func validateRouterParentRefs(config *Configuration) {
+	if config.Routers == nil {
+		return
+	}
+
+	for routerName, routerInfo := range config.Routers {
+		if routerInfo.Router == nil || len(routerInfo.Router.ParentRefs) == 0 {
+			continue
+		}
+
+		for _, parentRef := range routerInfo.Router.ParentRefs {
+			// Check for self-reference
+			if parentRef == routerName {
+				routerInfo.AddError(errors.New("router cannot reference itself as parent"), false)
+				continue
+			}
+
+			// Check if parent router exists
+			if _, exists := config.Routers[parentRef]; !exists {
+				routerInfo.AddError(fmt.Errorf("parent router %q does not exist", parentRef), false)
+			}
+		}
+	}
+}
+
+// validateRouterCircularDependencies validates that there are no circular dependencies
+// This is a stub implementation - full implementation will be done in T015
+func validateRouterCircularDependencies(config *Configuration) {
+	// TODO: Implement in T015 - RouterGraph for dependency management
 }

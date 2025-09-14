@@ -1,0 +1,65 @@
+# Authentication Pre-routing Test Configuration
+# Based on quickstart example - tests authentication middleware applied at parent level
+
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+  [entryPoints.websecure]
+    address = ":443"
+
+[api]
+  dashboard = true
+  debug = true
+
+# Test Services
+[http.services]
+  [http.services.api-service.loadBalancer]
+    [[http.services.api-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:3000"
+
+  [http.services.admin-service.loadBalancer]
+    [[http.services.admin-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:3001"
+
+  [http.services.public-service.loadBalancer]
+    [[http.services.public-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:3002"
+
+# Middleware definitions
+[http.middlewares]
+  [http.middlewares.auth.basicAuth]
+    users = ["admin:$2y$10$DjmdQxRwCk9DZ3JTL/nO8uBD3Mm7/.Vl8vu.1qWt9ZLqKaHJbXjhS"] # admin:password
+
+  [http.middlewares.api-headers.headers.customRequestHeaders]
+    X-API-Version = "v1"
+
+  [http.middlewares.admin-only.headers.customRequestHeaders]
+    X-Admin = "true"
+
+# Router tree
+[http.routers]
+  # Top-level router - applies auth to all children
+  [http.routers.auth-router]
+    entryPoints = ["web"]
+    rule = "Host(`api.example.com`)"
+    middlewares = ["auth"]
+
+  # Child router - inherits auth, adds API headers
+  [http.routers.api-router]
+    parentRefs = ["auth-router"]
+    rule = "PathPrefix(`/api`)"
+    middlewares = ["api-headers"]
+    service = "api-service"
+
+  # Grandchild router - inherits auth and api-headers, adds admin-only
+  [http.routers.admin-router]
+    parentRefs = ["api-router"]
+    rule = "Path(`/api/admin`)"
+    middlewares = ["admin-only"]
+    service = "admin-service"
+
+  # Independent router - no auth required
+  [http.routers.public-router]
+    entryPoints = ["web"]
+    rule = "Host(`public.example.com`)"
+    service = "public-service"

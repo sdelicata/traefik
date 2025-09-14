@@ -10,7 +10,8 @@
 			],
 			"service": "foo-service@myprovider",
 			"rule": "Host(`foo.bar`)",
-			"status": "enabled"
+			"status": "enabled",
+			"depth": 0
 		},
 		"test@myprovider": {
 			"entryPoints": [
@@ -22,7 +23,8 @@
 			],
 			"service": "foo-service@myprovider",
 			"rule": "Host(`foo.bar.other`)",
-			"status": "enabled"
+			"status": "enabled",
+			"depth": 0
 		}
 	},
 	"middlewares": {

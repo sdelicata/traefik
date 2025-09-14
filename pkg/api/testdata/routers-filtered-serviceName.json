@@ -1,5 +1,6 @@
 [
 	{
+		"depth": 0,
 		"entryPoints": [
 			"web"
 		],
@@ -13,6 +14,7 @@
 		]
 	},
 	{
+		"depth": 0,
 		"entryPoints": [
 			"web"
 		],

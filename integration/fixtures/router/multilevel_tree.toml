@@ -1,0 +1,82 @@
+# Multi-level Router Tree Test Configuration
+# Tests complex tree with multiple levels: grandparent → parent → child → grandchild
+
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+
+[api]
+  dashboard = true
+  debug = true
+
+# Test Services
+[http.services]
+  [http.services.users-service.loadBalancer]
+    [[http.services.users-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:8001"
+
+  [http.services.products-service.loadBalancer]
+    [[http.services.products-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:8002"
+
+  [http.services.admin-users-service.loadBalancer]
+    [[http.services.admin-users-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:8003"
+
+# Middleware definitions
+[http.middlewares]
+  [http.middlewares.global-security.headers.customRequestHeaders]
+    X-Security-Layer = "global"
+
+  [http.middlewares.api-auth.basicAuth]
+    users = ["apiuser:$2y$10$DjmdQxRwCk9DZ3JTL/nO8uBD3Mm7/.Vl8vu.1qWt9ZLqKaHJbXjhS"] # apiuser:password
+
+  [http.middlewares.v1-headers.headers.customRequestHeaders]
+    X-API-Version = "v1"
+
+  [http.middlewares.admin-auth.basicAuth]
+    users = ["admin:$2y$10$DjmdQxRwCk9DZ3JTL/nO8uBD3Mm7/.Vl8vu.1qWt9ZLqKaHJbXjhS"] # admin:password
+
+# Four-level router tree
+[http.routers]
+  # Level 1: Grandparent - Global security for entire domain
+  [http.routers.global-router]
+    entryPoints = ["web"]
+    rule = "Host(`api.example.com`)"
+    middlewares = ["global-security"]
+
+  # Level 2: Parent - API authentication
+  [http.routers.api-router]
+    parentRefs = ["global-router"]
+    rule = "PathPrefix(`/api`)"
+    middlewares = ["api-auth"]
+
+  # Level 3: Child - API version headers
+  [http.routers.v1-router]
+    parentRefs = ["api-router"]
+    rule = "PathPrefix(`/api/v1`)"
+    middlewares = ["v1-headers"]
+
+  # Level 4a: Grandchild - Users endpoint
+  [http.routers.users-router]
+    parentRefs = ["v1-router"]
+    rule = "Path(`/api/v1/users`)"
+    service = "users-service"
+
+  # Level 4b: Grandchild - Products endpoint
+  [http.routers.products-router]
+    parentRefs = ["v1-router"]
+    rule = "Path(`/api/v1/products`)"
+    service = "products-service"
+
+  # Alternative Level 3: Admin path (bypasses v1-router)
+  [http.routers.admin-router]
+    parentRefs = ["api-router"]
+    rule = "PathPrefix(`/api/admin`)"
+    middlewares = ["admin-auth"]
+
+  # Level 4c: Admin users endpoint
+  [http.routers.admin-users-router]
+    parentRefs = ["admin-router"]
+    rule = "Path(`/api/admin/users`)"
+    service = "admin-users-service"

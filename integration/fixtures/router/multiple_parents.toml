@@ -1,0 +1,67 @@
+# Multiple Parents Router Configuration
+# Tests routers with multiple parentRefs (all parents must match)
+
+[entryPoints]
+  [entryPoints.web]
+    address = ":80"
+
+[api]
+  dashboard = true
+  debug = true
+
+# Test Services
+[http.services]
+  [http.services.secure-api-service.loadBalancer]
+    [[http.services.secure-api-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:9001"
+
+  [http.services.cors-api-service.loadBalancer]
+    [[http.services.cors-api-service.loadBalancer.servers]]
+      url = "http://127.0.0.1:9002"
+
+# Middleware definitions
+[http.middlewares]
+  [http.middlewares.cors.headers]
+    accessControlAllowMethods = ["GET", "POST", "PUT", "DELETE"]
+    accessControlAllowOriginList = ["*"]
+    accessControlAllowHeaders = ["*"]
+
+  [http.middlewares.rate-limit.rateLimit]
+    burst = 10
+    average = 5
+
+  [http.middlewares.security-headers.headers.customRequestHeaders]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+
+# Multiple parent scenarios
+[http.routers]
+  # Parent 1: CORS handler for API domains
+  [http.routers.cors-parent]
+    entryPoints = ["web"]
+    rule = "Host(`api.example.com`) || Host(`api.staging.example.com`)"
+    middlewares = ["cors"]
+
+  # Parent 2: Rate limiting for API endpoints
+  [http.routers.rate-limit-parent]
+    entryPoints = ["web"]
+    rule = "Host(`api.example.com`)"
+    middlewares = ["rate-limit"]
+
+  # Parent 3: Security headers for secure domains
+  [http.routers.security-parent]
+    entryPoints = ["web"]
+    rule = "Host(`api.example.com`)"
+    middlewares = ["security-headers"]
+
+  # Child with multiple parents - requires ALL parents to match
+  [http.routers.secure-api-child]
+    parentRefs = ["cors-parent", "rate-limit-parent", "security-parent"]
+    rule = "PathPrefix(`/secure`)"
+    service = "secure-api-service"
+
+  # Child with fewer parents
+  [http.routers.cors-api-child]
+    parentRefs = ["cors-parent"]
+    rule = "Host(`api.staging.example.com`) && PathPrefix(`/public`)"
+    service = "cors-api-service"

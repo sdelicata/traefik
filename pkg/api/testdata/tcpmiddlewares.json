@@ -1,7 +1,9 @@
 [
 	{
 		"ipAllowList": {
-			"sourceRange": ["127.0.0.1/32"]
+			"sourceRange": [
+				"127.0.0.1/32"
+			]
 		},
 		"name": "ipallowlist1@anotherprovider",
 		"provider": "anotherprovider",
@@ -13,7 +15,9 @@
 	},
 	{
 		"ipAllowList": {
-			"sourceRange": ["127.0.0.1/32"]
+			"sourceRange": [
+				"127.0.0.1/32"
+			]
 		},
 		"name": "ipallowlist1@myprovider",
 		"provider": "myprovider",
@@ -26,7 +30,9 @@
 	},
 	{
 		"ipAllowList": {
-			"sourceRange": ["127.0.0.2/32"]
+			"sourceRange": [
+				"127.0.0.2/32"
+			]
 		},
 		"name": "ipallowlist2@myprovider",
 		"provider": "myprovider",
