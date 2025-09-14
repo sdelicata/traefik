@@ -21,6 +21,8 @@ type matcherBuilderFunc func(*matchersTree, ...string) error
 
 type MatcherFunc func(*http.Request) bool
 
+// MiddlewareBuilder interface moved to hierarchy.go to avoid duplication
+
 // Muxer handles routing with rules.
 type Muxer struct {
 	routes              routes
@@ -78,7 +80,8 @@ func (m *Muxer) SetDefaultHandler(handler http.Handler) {
 // EnableHierarchicalEvaluation enables hierarchical route evaluation for performance optimization
 func (m *Muxer) EnableHierarchicalEvaluation() {
 	if m.hierarchicalEngine == nil {
-		m.hierarchicalEngine = NewHierarchicalEvaluationEngine(m.parser)
+		// Initialize without middleware builder for now - will be set when SetHierarchicalRoutes is called
+		m.hierarchicalEngine = NewHierarchicalEvaluationEngine(m.parser, nil)
 	}
 	m.useHierarchicalEval = true
 }
@@ -88,11 +91,13 @@ func (m *Muxer) DisableHierarchicalEvaluation() {
 	m.useHierarchicalEval = false
 }
 
-// SetHierarchicalRoutes configures the hierarchical evaluation engine with router configurations
-func (m *Muxer) SetHierarchicalRoutes(routerConfigs map[string]*dynamic.Router, handlers map[string]http.Handler) error {
+// SetHierarchicalRoutes configures the hierarchical evaluation engine with router configurations and middleware builder
+func (m *Muxer) SetHierarchicalRoutes(routerConfigs map[string]*dynamic.Router, handlers map[string]http.Handler, middlewareBuilder MiddlewareBuilder) error {
 	if m.hierarchicalEngine == nil {
 		return fmt.Errorf("hierarchical evaluation engine not initialized")
 	}
+	// Update the middleware builder in the engine
+	m.hierarchicalEngine.middlewareBuilder = middlewareBuilder
 	return m.hierarchicalEngine.BuildHierarchy(routerConfigs, handlers)
 }
 

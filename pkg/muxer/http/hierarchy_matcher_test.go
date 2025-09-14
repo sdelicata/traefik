@@ -3,13 +3,33 @@ package http
 import (
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/traefik/traefik/v3/pkg/config/dynamic"
+	"github.com/traefik/traefik/v3/pkg/middlewares/requestdecorator"
 	"github.com/traefik/traefik/v3/pkg/testhelpers"
 )
+
+// mockMiddlewareBuilder is defined in middleware_integration_test.go
+
+// newTestRequestWithCanonicalHost creates a test request with proper canonical host context
+// Simpler version for matcher tests that don't need complex middleware
+func newTestRequestWithCanonicalHost(method, url string) *http.Request {
+	req := testhelpers.MustNewRequest(method, url, http.NoBody)
+
+	// Apply requestdecorator middleware to set canonical host context
+	decorator := requestdecorator.New(nil)
+	recorder := httptest.NewRecorder()
+
+	decorator.ServeHTTP(recorder, req, func(rw http.ResponseWriter, decoratedReq *http.Request) {
+		req = decoratedReq
+	})
+
+	return req
+}
 
 // TestHostMatchersAtAllHierarchyLevels tests FR-019: Host matchers work at any hierarchy level
 func TestHostMatchersAtAllHierarchyLevels(t *testing.T) {
@@ -91,7 +111,8 @@ func TestHostMatchersAtAllHierarchyLevels(t *testing.T) {
 			parser, err := NewSyntaxParser()
 			require.NoError(t, err)
 
-			engine := NewHierarchicalEvaluationEngine(parser)
+			mockBuilder := &mockMiddlewareBuilder{}
+			engine := NewHierarchicalEvaluationEngine(parser, mockBuilder)
 
 			// Create test routers using dynamic configuration
 			routerConfigs := map[string]*dynamic.Router{
@@ -126,8 +147,8 @@ func TestHostMatchersAtAllHierarchyLevels(t *testing.T) {
 			err = engine.BuildHierarchy(routerConfigs, handlers)
 			require.NoError(t, err)
 
-			// Create test request
-			req := testhelpers.MustNewRequest(http.MethodGet, tc.testURL, http.NoBody)
+			// Create test request with proper canonical host setup
+			req := newTestRequestWithCanonicalHost(http.MethodGet, tc.testURL)
 
 			// Test hierarchical evaluation
 			matchedRouter, found := engine.EvaluateRequest(req)

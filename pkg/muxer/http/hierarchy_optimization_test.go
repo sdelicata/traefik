@@ -10,6 +10,8 @@ import (
 	"github.com/traefik/traefik/v3/pkg/config/dynamic"
 )
 
+// mockMiddlewareBuilder is defined in middleware_integration_test.go
+
 // hierarchicalRouteCounter tracks route evaluations during hierarchical routing tests
 type hierarchicalRouteCounter struct {
 	totalEvaluations int64
@@ -285,7 +287,8 @@ func BenchmarkEarlyTerminationOptimization(b *testing.B) {
 			routerConfigs, handlers := setupHierarchicalTestConfiguration(tc, handler)
 
 			// Configure the hierarchical evaluation engine
-			err = mux.SetHierarchicalRoutes(routerConfigs, handlers)
+			mockBuilder := &mockMiddlewareBuilder{}
+			err = mux.SetHierarchicalRoutes(routerConfigs, handlers, mockBuilder)
 			if err != nil {
 				b.Fatal(err)
 			}

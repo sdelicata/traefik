@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"math"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 
 	"github.com/containous/alice"
@@ -70,41 +69,13 @@ func (m *Manager) getHTTPRouters(ctx context.Context, entryPoints []string, tls 
 
 // BuildHandlers Builds handler for all entry points.
 func (m *Manager) BuildHandlers(rootCtx context.Context, entryPoints []string, tls bool, precomputedProblematicRouters []string, precomputedRouterErrors map[string]error) map[string]http.Handler {
-	entryPointHandlers := make(map[string]http.Handler)
-
 	defaultObsConfig := dynamic.RouterObservabilityConfig{}
 	defaultObsConfig.SetDefaults()
 
-	var problematicRouters []string
-	var routerErrors map[string]error
-	var problematicRoutersMap map[string]bool
-
-	// Use precomputed validation results if provided, otherwise compute them
-	if precomputedProblematicRouters != nil && precomputedRouterErrors != nil {
-		problematicRouters = precomputedProblematicRouters
-		routerErrors = precomputedRouterErrors
-	} else {
-		// Validate router tree using RouterGraph - FR-013: graceful error handling
-		problematicRouters, routerErrors = m.validateRouterTree()
-	}
-
-	problematicRoutersMap = make(map[string]bool)
-	for _, routerName := range problematicRouters {
-		problematicRoutersMap[routerName] = true
-	}
-
-	if len(problematicRouters) > 0 {
-		logger := log.Ctx(rootCtx)
-		// Log each problematic router individually for clear error reporting
-		for _, routerName := range problematicRouters {
-			if err, exists := routerErrors[routerName]; exists {
-				logger.Error().Err(err).Str("router", routerName).Msg("Router excluded due to validation failure")
-			}
-		}
-		logger.Info().Int("problematic_count", len(problematicRouters)).
-			Int("total_routers", len(m.conf.Routers)).
-			Msg("FR-013: Continuing with healthy routers, excluding problematic ones")
-	}
+	// Prepare router validation results
+	problematicRouters, routerErrors := m.prepareRouterValidation(precomputedProblematicRouters, precomputedRouterErrors)
+	problematicRoutersMap := m.createProblematicRoutersMap(problematicRouters)
+	m.logRouterValidationResults(rootCtx, problematicRouters, routerErrors)
 
 	// T038: Detect if hierarchical optimization should be enabled
 	useHierarchicalOptimization := m.hasHierarchicalRouters()
@@ -113,17 +84,86 @@ func (m *Manager) BuildHandlers(rootCtx context.Context, entryPoints []string, t
 		logger.Info().Msg("T038: Hierarchical routing detected, enabling performance optimization")
 	}
 
+	// Build entry point handlers for healthy routers
+	entryPointHandlers := m.buildEntryPointHandlers(rootCtx, entryPoints, tls, problematicRoutersMap, useHierarchicalOptimization, defaultObsConfig)
+
+	// Create default handlers for entry points without handlers
+	m.createDefaultHandlers(rootCtx, entryPoints, entryPointHandlers, defaultObsConfig)
+
+	return entryPointHandlers
+}
+
+// prepareRouterValidation handles router validation logic, using precomputed results if available
+func (m *Manager) prepareRouterValidation(precomputedProblematicRouters []string, precomputedRouterErrors map[string]error) ([]string, map[string]error) {
+	// Use precomputed validation results if provided, otherwise compute them
+	if precomputedProblematicRouters != nil && precomputedRouterErrors != nil {
+		return precomputedProblematicRouters, precomputedRouterErrors
+	}
+
+	// Validate router tree using RouterGraph - FR-013: graceful error handling
+	return m.validateRouterTree()
+}
+
+// createProblematicRoutersMap converts a slice of problematic router names to a map for quick lookup
+func (m *Manager) createProblematicRoutersMap(problematicRouters []string) map[string]bool {
+	problematicRoutersMap := make(map[string]bool)
+	for _, routerName := range problematicRouters {
+		problematicRoutersMap[routerName] = true
+	}
+	return problematicRoutersMap
+}
+
+// logRouterValidationResults logs problematic routers and their validation errors
+func (m *Manager) logRouterValidationResults(ctx context.Context, problematicRouters []string, routerErrors map[string]error) {
+	if len(problematicRouters) == 0 {
+		return
+	}
+
+	logger := log.Ctx(ctx)
+	// Log each problematic router individually for clear error reporting
+	for _, routerName := range problematicRouters {
+		if err, exists := routerErrors[routerName]; exists {
+			logger.Error().Err(err).Str("router", routerName).Msg("Router excluded due to validation failure")
+		}
+	}
+	logger.Info().Int("problematic_count", len(problematicRouters)).
+		Int("total_routers", len(m.conf.Routers)).
+		Msg("FR-013: Continuing with healthy routers, excluding problematic ones")
+}
+
+// getObservabilityConfig retrieves the observability configuration for an entry point
+func (m *Manager) getObservabilityConfig(entryPointName string, defaultObsConfig dynamic.RouterObservabilityConfig) dynamic.RouterObservabilityConfig {
+	// TODO: Improve this part. Relying on models is a shortcut to get the entrypoint observability configuration. Maybe we should pass down the static configuration.
+	// When the entry point has no observability configuration no model is produced,
+	// and we need to create the default configuration is this case.
+	epObsConfig := defaultObsConfig
+	if model, ok := m.conf.Models[entryPointName+"@internal"]; ok && model != nil {
+		epObsConfig = model.Observability
+	}
+	return epObsConfig
+}
+
+// filterHealthyRouters filters out problematic routers, keeping only healthy ones
+func (m *Manager) filterHealthyRouters(routers map[string]*runtime.RouterInfo, problematicRoutersMap map[string]bool) map[string]*runtime.RouterInfo {
+	healthyRouters := make(map[string]*runtime.RouterInfo)
+	for routerName, routerInfo := range routers {
+		if !problematicRoutersMap[routerName] {
+			healthyRouters[routerName] = routerInfo
+		}
+	}
+	return healthyRouters
+}
+
+// buildEntryPointHandlers builds handlers for each entry point with healthy routers
+func (m *Manager) buildEntryPointHandlers(rootCtx context.Context, entryPoints []string, tls bool, problematicRoutersMap map[string]bool, useHierarchicalOptimization bool, defaultObsConfig dynamic.RouterObservabilityConfig) map[string]http.Handler {
+	entryPointHandlers := make(map[string]http.Handler)
+
 	for entryPointName, routers := range m.getHTTPRouters(rootCtx, entryPoints, tls) {
 		logger := log.Ctx(rootCtx).With().Str(logs.EntryPointName, entryPointName).Logger()
 		ctx := logger.WithContext(rootCtx)
 
 		// FR-013: Filter out problematic routers, keep only healthy ones
-		healthyRouters := make(map[string]*runtime.RouterInfo)
-		for routerName, routerInfo := range routers {
-			if !problematicRoutersMap[routerName] {
-				healthyRouters[routerName] = routerInfo
-			}
-		}
+		healthyRouters := m.filterHealthyRouters(routers, problematicRoutersMap)
 
 		// Skip building handler if no healthy routers remain for this entry point
 		if len(healthyRouters) == 0 {
@@ -131,13 +171,7 @@ func (m *Manager) BuildHandlers(rootCtx context.Context, entryPoints []string, t
 			continue
 		}
 
-		// TODO: Improve this part. Relying on models is a shortcut to get the entrypoint observability configuration. Maybe we should pass down the static configuration.
-		// When the entry point has no observability configuration no model is produced,
-		// and we need to create the default configuration is this case.
-		epObsConfig := defaultObsConfig
-		if model, ok := m.conf.Models[entryPointName+"@internal"]; ok && model != nil {
-			epObsConfig = model.Observability
-		}
+		epObsConfig := m.getObservabilityConfig(entryPointName, defaultObsConfig)
 
 		// T038: Pass hierarchical optimization flag to entry point handler building
 		handler, err := m.buildEntryPointHandlerWithOptimization(ctx, entryPointName, healthyRouters, epObsConfig, useHierarchicalOptimization)
@@ -149,6 +183,11 @@ func (m *Manager) BuildHandlers(rootCtx context.Context, entryPoints []string, t
 		entryPointHandlers[entryPointName] = handler
 	}
 
+	return entryPointHandlers
+}
+
+// createDefaultHandlers creates default handlers for entry points that don't have handlers yet
+func (m *Manager) createDefaultHandlers(rootCtx context.Context, entryPoints []string, entryPointHandlers map[string]http.Handler, defaultObsConfig dynamic.RouterObservabilityConfig) {
 	// Create default handlers.
 	for _, entryPointName := range entryPoints {
 		logger := log.Ctx(rootCtx).With().Str(logs.EntryPointName, entryPointName).Logger()
@@ -159,13 +198,7 @@ func (m *Manager) BuildHandlers(rootCtx context.Context, entryPoints []string, t
 			continue
 		}
 
-		// TODO: Improve this part. Relying on models is a shortcut to get the entrypoint observability configuration. Maybe we should pass down the static configuration.
-		// When the entry point has no observability configuration no model is produced,
-		// and we need to create the default configuration is this case.
-		epObsConfig := defaultObsConfig
-		if model, ok := m.conf.Models[entryPointName+"@internal"]; ok && model != nil {
-			epObsConfig = model.Observability
-		}
+		epObsConfig := m.getObservabilityConfig(entryPointName, defaultObsConfig)
 
 		defaultHandler, err := m.observabilityMgr.BuildEPChain(ctx, entryPointName, false, epObsConfig).Then(http.NotFoundHandler())
 		if err != nil {
@@ -174,8 +207,6 @@ func (m *Manager) BuildHandlers(rootCtx context.Context, entryPoints []string, t
 		}
 		entryPointHandlers[entryPointName] = defaultHandler
 	}
-
-	return entryPointHandlers
 }
 
 // validateRouterTree validates the router tree using RouterGraph, returning per-router validation results
@@ -378,7 +409,7 @@ func (m *Manager) buildEntryPointHandlerWithOptimization(ctx context.Context, en
 
 	// T038: Configure hierarchical routes after all handlers are built
 	if useHierarchical && len(routerConfigs) > 0 {
-		if err := muxer.SetHierarchicalRoutes(routerConfigs, routerHandlers); err != nil {
+		if err := muxer.SetHierarchicalRoutes(routerConfigs, routerHandlers, m.middlewaresBuilder); err != nil {
 			logger := log.Ctx(ctx)
 			logger.Error().Err(err).Str("entryPoint", entryPointName).Msg("T038: Failed to configure hierarchical routes, falling back to standard routing")
 			// Don't return error - fall back to standard routing which is already configured
@@ -422,28 +453,12 @@ func (m *Manager) buildRouterHandler(ctx context.Context, routerName string, rou
 }
 
 func (m *Manager) buildHTTPHandler(ctx context.Context, router *runtime.RouterInfo, routerName string) (http.Handler, error) {
-	// T040.1: Check if this router has parent relationships for sequential middleware execution
-	hasParents := router.ParentRefs != nil && len(router.ParentRefs) > 0
+	// Simplified approach: Each router builds only its own middleware chain
+	// The hierarchical engine now handles parent-child middleware execution during route evaluation
 
-	if hasParents {
-		// T040.1: For routers with parents, create a sequential middleware execution handler
-		return m.buildSequentialMiddlewareHandler(ctx, router, routerName)
-	}
-
-	// Standard middleware handling for routers without parent relationships
-	// Collect parent middleware first, then add current router's middleware
-	var allMiddlewares []string
-
-	// Collect parent middleware in tree order (from root to child)
-	parentMiddleware := m.collectParentMiddleware(routerName, make(map[string]bool))
-	allMiddlewares = append(allMiddlewares, parentMiddleware...)
-
-	// Add this router's own middleware
-	allMiddlewares = append(allMiddlewares, router.Middlewares...)
-
-	// Qualify all middleware names
+	// Qualify middleware names for this router only
 	var qualifiedNames []string
-	for _, name := range allMiddlewares {
+	for _, name := range router.Middlewares {
 		qualifiedNames = append(qualifiedNames, provider.GetQualifiedName(ctx, name))
 	}
 	router.Middlewares = qualifiedNames
@@ -513,44 +528,7 @@ func (m *Manager) collectParentMiddleware(routerName string, visited map[string]
 	return allMiddleware
 }
 
-// T040.1: buildSequentialMiddlewareHandler creates a handler that executes middleware sequentially by hierarchy level
-// This implements FR-014 requirement for sequential middleware execution at each router level
-func (m *Manager) buildSequentialMiddlewareHandler(ctx context.Context, router *runtime.RouterInfo, routerName string) (http.Handler, error) {
-	log.Debug().Str("router", routerName).Msg("T040.1: Building sequential middleware handler")
-
-	if router.Service == "" {
-		return nil, errors.New("the service is missing on the router")
-	}
-
-	qualifiedService := provider.GetQualifiedName(ctx, router.Service)
-
-	// Build the service handler (without middleware)
-	serviceHandler, err := m.serviceManager.BuildHTTP(ctx, qualifiedService)
-	if err != nil {
-		return nil, err
-	}
-
-	// Create hierarchical middleware structure
-	hierarchyLevels := m.buildMiddlewareHierarchy(routerName, make(map[string]bool))
-
-	// Build sequential middleware execution handler
-	handler := m.createSequentialExecutionHandler(ctx, hierarchyLevels, serviceHandler, routerName)
-
-	// Add standard observability and access log middleware
-	chain := alice.New()
-	if router.DefaultRule {
-		chain = chain.Append(denyrouterrecursion.WrapHandler(routerName))
-	}
-
-	chain = chain.Append(observability.WrapRouterHandler(ctx, routerName, router.Rule, qualifiedService))
-	metricsHandler := metricsMiddle.RouterMetricsHandler(ctx, m.observabilityMgr.MetricsRegistry(), routerName, qualifiedService)
-	chain = chain.Append(observability.WrapMiddleware(ctx, metricsHandler))
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return accesslog.NewFieldHandler(next, accesslog.RouterName, routerName, nil), nil
-	})
-
-	return chain.Then(handler)
-}
+// Removed buildSequentialMiddlewareHandler - hierarchical evaluation engine now handles middleware execution during route evaluation
 
 // T040.1: buildMiddlewareHierarchy builds middleware hierarchy preserving router levels
 func (m *Manager) buildMiddlewareHierarchy(routerName string, visited map[string]bool) [][]string {
@@ -583,76 +561,7 @@ func (m *Manager) buildMiddlewareHierarchy(routerName string, visited map[string
 	return hierarchyLevels
 }
 
-// T040.1: createSequentialExecutionHandler creates handler that executes middleware level by level
-func (m *Manager) createSequentialExecutionHandler(ctx context.Context, hierarchyLevels [][]string, serviceHandler http.Handler, routerName string) http.Handler {
-	return http.HandlerFunc(func(rw http.ResponseWriter, req *http.Request) {
-		log.Debug().Str("router", routerName).Int("levels", len(hierarchyLevels)).Msg("T040.1: Starting sequential middleware execution")
-
-		currentReq := req
-
-		// Execute middleware level by level
-		for levelIndex, middlewareNames := range hierarchyLevels {
-			log.Debug().Str("router", routerName).Int("level", levelIndex).Strs("middlewares", middlewareNames).Msg("T040.1: Executing middleware level")
-
-			// Create middleware chain for this level
-			var qualifiedNames []string
-			for _, name := range middlewareNames {
-				qualifiedNames = append(qualifiedNames, provider.GetQualifiedName(ctx, name))
-			}
-
-			// T040.1: Execute actual middleware chain for this level
-			if len(qualifiedNames) > 0 {
-				middlewareChain := m.middlewaresBuilder.BuildChain(ctx, qualifiedNames)
-
-				// Create a temporary handler that captures the modified request
-				var capturedReq *http.Request
-				tempHandler := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-					capturedReq = r
-				})
-
-				// Execute middleware chain and capture the modified request
-				finalHandler, err := middlewareChain.Then(tempHandler)
-				if err != nil {
-					log.Error().Err(err).Str("router", routerName).Int("level", levelIndex).Msg("T040.1: Failed to build middleware chain")
-					continue
-				}
-
-				// Execute middleware on current request
-				finalHandler.ServeHTTP(httptest.NewRecorder(), currentReq)
-
-				// Use the captured modified request for next level
-				if capturedReq != nil {
-					currentReq = capturedReq
-				}
-			}
-		}
-
-		// T040.1: Debug - Check what headers are present before calling service handler
-		testHeaders := make([]string, 0)
-		for name, values := range currentReq.Header {
-			if strings.HasPrefix(name, "X-Test-") {
-				for _, value := range values {
-					testHeaders = append(testHeaders, name+": "+value)
-				}
-			}
-		}
-		log.Debug().Str("router", routerName).Strs("test_headers", testHeaders).Msg("T040.1: Completed sequential middleware execution, calling service handler")
-
-		// Call final service handler with modified request
-		serviceHandler.ServeHTTP(rw, currentReq)
-
-		// T040.1: Debug - Check what headers are in the response after service handler
-		responseHeaders := make([]string, 0)
-		for name, values := range rw.Header() {
-			if strings.HasPrefix(name, "X-Test-") {
-				for _, value := range values {
-					responseHeaders = append(responseHeaders, name+": "+value)
-				}
-			}
-		}
-		log.Debug().Str("router", routerName).Strs("response_headers", responseHeaders).Msg("T040.1: Response headers after service handler")
-	})
-}
+// Removed createSequentialExecutionHandler - middleware execution now happens during hierarchical route evaluation
 
 // PopulateTreeInfo builds router tree data and populates it in the runtime configuration
 func PopulateTreeInfo(runtimeConfig *runtime.Configuration, routers map[string]*dynamic.Router) {
