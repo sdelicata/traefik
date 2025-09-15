@@ -77,15 +77,8 @@ func (m *Manager) BuildHandlers(rootCtx context.Context, entryPoints []string, t
 	problematicRoutersMap := m.createProblematicRoutersMap(problematicRouters)
 	m.logRouterValidationResults(rootCtx, problematicRouters, routerErrors)
 
-	// T038: Detect if hierarchical optimization should be enabled
-	useHierarchicalOptimization := m.hasHierarchicalRouters()
-	if useHierarchicalOptimization {
-		logger := log.Ctx(rootCtx)
-		logger.Info().Msg("T038: Hierarchical routing detected, enabling performance optimization")
-	}
-
 	// Build entry point handlers for healthy routers
-	entryPointHandlers := m.buildEntryPointHandlers(rootCtx, entryPoints, tls, problematicRoutersMap, useHierarchicalOptimization, defaultObsConfig)
+	entryPointHandlers := m.buildEntryPointHandlers(rootCtx, entryPoints, tls, problematicRoutersMap, defaultObsConfig)
 
 	// Create default handlers for entry points without handlers
 	m.createDefaultHandlers(rootCtx, entryPoints, entryPointHandlers, defaultObsConfig)
@@ -155,7 +148,7 @@ func (m *Manager) filterHealthyRouters(routers map[string]*runtime.RouterInfo, p
 }
 
 // buildEntryPointHandlers builds handlers for each entry point with healthy routers
-func (m *Manager) buildEntryPointHandlers(rootCtx context.Context, entryPoints []string, tls bool, problematicRoutersMap map[string]bool, useHierarchicalOptimization bool, defaultObsConfig dynamic.RouterObservabilityConfig) map[string]http.Handler {
+func (m *Manager) buildEntryPointHandlers(rootCtx context.Context, entryPoints []string, tls bool, problematicRoutersMap map[string]bool, defaultObsConfig dynamic.RouterObservabilityConfig) map[string]http.Handler {
 	entryPointHandlers := make(map[string]http.Handler)
 
 	for entryPointName, routers := range m.getHTTPRouters(rootCtx, entryPoints, tls) {
@@ -173,8 +166,8 @@ func (m *Manager) buildEntryPointHandlers(rootCtx context.Context, entryPoints [
 
 		epObsConfig := m.getObservabilityConfig(entryPointName, defaultObsConfig)
 
-		// T038: Pass hierarchical optimization flag to entry point handler building
-		handler, err := m.buildEntryPointHandlerWithOptimization(ctx, entryPointName, healthyRouters, epObsConfig, useHierarchicalOptimization)
+		// Build entry point handler with automatic hierarchical optimization detection
+		handler, err := m.buildEntryPointHandler(ctx, entryPointName, healthyRouters, epObsConfig)
 		if err != nil {
 			logger.Error().Err(err).Send()
 			continue
@@ -226,6 +219,17 @@ func (m *Manager) hasHierarchicalRouters() bool {
 	return false
 }
 
+// hasHierarchicalRoutersInConfigs checks if any router in the provided configs has ParentRefs defined.
+// Returns true if hierarchical routing is needed for this specific set of routers.
+func (m *Manager) hasHierarchicalRoutersInConfigs(configs map[string]*runtime.RouterInfo) bool {
+	for _, routerConfig := range configs {
+		if len(routerConfig.ParentRefs) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // ValidateRouterTree validates router tree configuration using RouterGraph, returning per-router validation results.
 // This is a standalone function that doesn't require a Manager instance.
 func ValidateRouterTree(routers map[string]*runtime.RouterInfo) ([]string, map[string]error) {
@@ -270,75 +274,17 @@ func ValidateRouterTree(routers map[string]*runtime.RouterInfo) ([]string, map[s
 	return problematicRouters, routerErrors
 }
 
+// buildEntryPointHandler builds the entry point handler with automatic hierarchical optimization detection.
+// Hierarchical optimization is enabled when parent-child router relationships are detected.
 func (m *Manager) buildEntryPointHandler(ctx context.Context, entryPointName string, configs map[string]*runtime.RouterInfo, config dynamic.RouterObservabilityConfig) (http.Handler, error) {
 	muxer := httpmuxer.NewMuxer(m.parser)
 
-	defaultHandler, err := m.observabilityMgr.BuildEPChain(ctx, entryPointName, false, config).Then(http.NotFoundHandler())
-	if err != nil {
-		return nil, err
-	}
-
-	muxer.SetDefaultHandler(defaultHandler)
-
-	for routerName, routerConfig := range configs {
-		logger := log.Ctx(ctx).With().Str(logs.RouterName, routerName).Logger()
-		ctxRouter := logger.WithContext(provider.AddInContext(ctx, routerName))
-
-		if routerConfig.Priority == 0 {
-			routerConfig.Priority = httpmuxer.GetRulePriority(routerConfig.Rule)
-		}
-
-		if routerConfig.Priority > maxUserPriority && !strings.HasSuffix(routerName, "@internal") {
-			err = fmt.Errorf("the router priority %d exceeds the max user-defined priority %d", routerConfig.Priority, maxUserPriority)
-			routerConfig.AddError(err, true)
-			logger.Error().Err(err).Send()
-			continue
-		}
-
-		handler, err := m.buildRouterHandler(ctxRouter, routerName, routerConfig)
-		if err != nil {
-			routerConfig.AddError(err, true)
-			logger.Error().Err(err).Send()
-			continue
-		}
-
-		if routerConfig.Observability != nil {
-			config = *routerConfig.Observability
-		}
-
-		observabilityChain := m.observabilityMgr.BuildEPChain(ctxRouter, entryPointName, strings.HasSuffix(routerConfig.Service, "@internal"), config)
-		handler, err = observabilityChain.Then(handler)
-		if err != nil {
-			routerConfig.AddError(err, true)
-			logger.Error().Err(err).Send()
-			continue
-		}
-
-		if err = muxer.AddRoute(routerConfig.Rule, routerConfig.RuleSyntax, routerConfig.Priority, handler); err != nil {
-			routerConfig.AddError(err, true)
-			logger.Error().Err(err).Send()
-			continue
-		}
-	}
-
-	chain := alice.New()
-	chain = chain.Append(func(next http.Handler) (http.Handler, error) {
-		return recovery.New(ctx, next)
-	})
-
-	return chain.Then(muxer)
-}
-
-// buildEntryPointHandlerWithOptimization builds the entry point handler with optional hierarchical optimization.
-// T038: Integrates hierarchical optimization with router building when hierarchical routers are detected.
-func (m *Manager) buildEntryPointHandlerWithOptimization(ctx context.Context, entryPointName string, configs map[string]*runtime.RouterInfo, config dynamic.RouterObservabilityConfig, useHierarchical bool) (http.Handler, error) {
-	muxer := httpmuxer.NewMuxer(m.parser)
-
-	// T038: Enable hierarchical evaluation if hierarchical routers are detected
+	// Detect if hierarchical routing is needed by checking for ParentRefs
+	useHierarchical := m.hasHierarchicalRoutersInConfigs(configs)
 	if useHierarchical {
 		muxer.EnableHierarchicalEvaluation()
 		logger := log.Ctx(ctx)
-		logger.Debug().Str("entryPoint", entryPointName).Msg("T038: Hierarchical evaluation enabled for performance optimization")
+		logger.Debug().Str("entryPoint", entryPointName).Msg("Hierarchical evaluation enabled for performance optimization")
 	}
 
 	defaultHandler, err := m.observabilityMgr.BuildEPChain(ctx, entryPointName, false, config).Then(http.NotFoundHandler())
@@ -348,7 +294,7 @@ func (m *Manager) buildEntryPointHandlerWithOptimization(ctx context.Context, en
 
 	muxer.SetDefaultHandler(defaultHandler)
 
-	// T038: Collect router configurations and handlers for hierarchical setup
+	// Collect router configurations and handlers for hierarchical setup
 	var routerConfigs map[string]*dynamic.Router
 	var routerHandlers map[string]http.Handler
 
@@ -391,7 +337,7 @@ func (m *Manager) buildEntryPointHandlerWithOptimization(ctx context.Context, en
 			continue
 		}
 
-		// T038: Store router configuration and handler for hierarchical setup
+		// Store router configuration and handler for hierarchical setup
 		if useHierarchical {
 			// Get the original router config from manager's configuration
 			if originalConfigInfo, exists := m.conf.Routers[routerName]; exists {
@@ -407,15 +353,15 @@ func (m *Manager) buildEntryPointHandlerWithOptimization(ctx context.Context, en
 		}
 	}
 
-	// T038: Configure hierarchical routes after all handlers are built
+	// Configure hierarchical routes after all handlers are built
 	if useHierarchical && len(routerConfigs) > 0 {
 		if err := muxer.SetHierarchicalRoutes(routerConfigs, routerHandlers, m.middlewaresBuilder); err != nil {
 			logger := log.Ctx(ctx)
-			logger.Error().Err(err).Str("entryPoint", entryPointName).Msg("T038: Failed to configure hierarchical routes, falling back to standard routing")
+			logger.Error().Err(err).Str("entryPoint", entryPointName).Msg("Failed to configure hierarchical routes, falling back to standard routing")
 			// Don't return error - fall back to standard routing which is already configured
 		} else {
 			logger := log.Ctx(ctx)
-			logger.Info().Str("entryPoint", entryPointName).Int("hierarchicalRouters", len(routerConfigs)).Msg("T038: Hierarchical optimization configured successfully")
+			logger.Info().Str("entryPoint", entryPointName).Int("hierarchicalRouters", len(routerConfigs)).Msg("Hierarchical optimization configured successfully")
 		}
 	}
 
