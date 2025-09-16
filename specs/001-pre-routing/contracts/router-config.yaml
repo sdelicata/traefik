@@ -1,0 +1,198 @@
+# Router Configuration Contract
+# Defines the schema for router configuration with parentRefs support
+
+openapi: 3.0.0
+info:
+  title: Traefik Router Tree Configuration
+  version: 3.x
+  description: Configuration schema for routers with parent-child relationships
+
+components:
+  schemas:
+    Router:
+      type: object
+      properties:
+        entryPoints:
+          type: array
+          items:
+            type: string
+          description: Entry points where router listens
+          example: ["web", "websecure"]
+        
+        middlewares:
+          type: array
+          items:
+            type: string
+          description: Middleware chain applied to requests
+          example: ["auth", "rate-limit"]
+        
+        service:
+          type: string
+          description: Backend service name to route to
+          example: "api-service"
+        
+        rule:
+          type: string
+          description: Matching rule expression
+          example: "Host(`api.example.com`) && PathPrefix(`/v1`)"
+        
+        priority:
+          type: integer
+          description: Router priority for conflict resolution
+          minimum: 0
+          example: 100
+        
+        parentRefs:
+          type: array
+          items:
+            type: string
+          description: References to parent router names
+          example: ["auth-router", "global-router"]
+        
+        tls:
+          $ref: '#/components/schemas/RouterTLSConfig'
+        
+        observability:
+          $ref: '#/components/schemas/RouterObservabilityConfig'
+      
+      required:
+        - rule
+    
+    RouterTLSConfig:
+      type: object
+      properties:
+        options:
+          type: string
+        certResolver:
+          type: string
+        domains:
+          type: array
+          items:
+            type: object
+            properties:
+              main:
+                type: string
+              sans:
+                type: array
+                items:
+                  type: string
+    
+    RouterObservabilityConfig:
+      type: object
+      properties:
+        accessLog:
+          type: boolean
+        metrics:
+          type: boolean
+        tracing:
+          type: boolean
+    
+    HTTPConfiguration:
+      type: object
+      properties:
+        routers:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/Router'
+          description: Map of router names to router configurations
+        
+        services:
+          type: object
+          description: Service configurations (existing)
+        
+        middlewares:
+          type: object
+          description: Middleware configurations (existing)
+
+    ValidationError:
+      type: object
+      properties:
+        error:
+          type: string
+          enum:
+            - RouterParentNotFound
+            - RouterCircularDependency
+            - RouterLoopLimitExceeded
+            - RouterInvalidParentRef
+        message:
+          type: string
+        details:
+          type: object
+          properties:
+            router:
+              type: string
+            parentRef:
+              type: string
+            chain:
+              type: array
+              items:
+                type: string
+
+# Configuration Examples
+examples:
+  BasicTree:
+    value:
+      http:
+        routers:
+          global-router:
+            rule: "Host(`example.com`)"
+            middlewares:
+              - security-headers
+          
+          api-router:
+            parentRefs:
+              - global-router
+            rule: "PathPrefix(`/api`)"
+            middlewares:
+              - api-auth
+            service: api-service
+          
+          admin-router:
+            parentRefs:
+              - api-router
+            rule: "Path(`/api/admin`)"
+            middlewares:
+              - admin-auth
+            service: admin-service
+  
+  MultipleParents:
+    value:
+      http:
+        routers:
+          auth-router:
+            rule: "Host(`secure.example.com`)"
+            middlewares:
+              - basic-auth
+          
+          cors-router:
+            rule: "Host(`api.example.com`)"
+            middlewares:
+              - cors
+          
+          api-router:
+            parentRefs:
+              - auth-router
+              - cors-router
+            rule: "PathPrefix(`/v1`)"
+            service: api-service
+  
+  ValidationErrors:
+    value:
+      errors:
+        - error: RouterParentNotFound
+          message: "Parent router 'non-existent' not found"
+          details:
+            router: "child-router"
+            parentRef: "non-existent"
+        
+        - error: RouterCircularDependency
+          message: "Circular dependency detected"
+          details:
+            router: "router-a"
+            chain: ["router-a", "router-b", "router-c", "router-a"]
+        
+        - error: RouterLoopLimitExceeded
+          message: "Loop limit of 3 exceeded"
+          details:
+            router: "deep-child"
+            chain: ["root", "level1", "level2", "level3", "root"]

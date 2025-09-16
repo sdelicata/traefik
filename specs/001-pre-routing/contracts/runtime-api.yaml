@@ -1,0 +1,250 @@
+# Runtime API Contract
+# Defines the API responses for router tree information
+
+openapi: 3.0.0
+info:
+  title: Traefik Runtime API - Router Tree
+  version: 3.x
+  description: Runtime API endpoints for querying router tree
+
+paths:
+  /api/http/routers:
+    get:
+      summary: Get all HTTP routers with tree information
+      responses:
+        '200':
+          description: List of routers with parent-child relationships
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/RouterInfo'
+  
+  /api/http/routers/{name}:
+    get:
+      summary: Get specific router with tree details
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Router details including parent and child information
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RouterInfo'
+        '404':
+          description: Router not found
+
+components:
+  schemas:
+    RouterInfo:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Router identifier
+          example: "api-router"
+        
+        provider:
+          type: string
+          description: Configuration provider
+          example: "file"
+        
+        status:
+          type: string
+          enum: ["enabled", "disabled", "warning"]
+          description: Router status
+        
+        rule:
+          type: string
+          description: Router matching rule
+          example: "Host(`api.example.com`)"
+        
+        priority:
+          type: integer
+          description: Router priority
+          example: 100
+        
+        entryPoints:
+          type: array
+          items:
+            type: string
+          example: ["web", "websecure"]
+        
+        middlewares:
+          type: array
+          items:
+            type: string
+          description: Configured middleware (not including inherited)
+          example: ["api-auth"]
+        
+        service:
+          type: string
+          description: Target service
+          example: "api-service"
+        
+        # New tree fields
+        parentRefs:
+          type: array
+          items:
+            type: string
+          description: Configured parent router names
+          example: ["global-router"]
+        
+        parents:
+          type: array
+          items:
+            type: string
+          description: Validated parent router names
+          example: ["global-router"]
+        
+        children:
+          type: array
+          items:
+            type: string
+          description: Child router names
+          example: ["users-router", "admin-router"]
+        
+        depth:
+          type: integer
+          description: Depth in tree (0 = top-level)
+          minimum: 0
+          example: 1
+        
+        effectiveMiddlewares:
+          type: array
+          items:
+            type: string
+          description: Complete middleware chain including inherited
+          example: ["security-headers", "api-auth"]
+        
+        using:
+          type: array
+          items:
+            type: string
+          description: Services using this router
+        
+        error:
+          type: string
+          description: Configuration error if any
+          example: ""
+    
+    RouterGraph:
+      type: object
+      properties:
+        routers:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/RouterNode'
+        
+        topLevel:
+          type: array
+          items:
+            type: string
+          description: Router names without parents
+          example: ["global-router", "public-router"]
+        
+        validated:
+          type: boolean
+          description: Graph validation status
+    
+    RouterNode:
+      type: object
+      properties:
+        name:
+          type: string
+        
+        parents:
+          type: array
+          items:
+            type: string
+        
+        children:
+          type: array
+          items:
+            type: string
+        
+        depth:
+          type: integer
+          minimum: 0
+        
+        hasCircularDependency:
+          type: boolean
+          default: false
+
+# Response Examples
+examples:
+  RouterListResponse:
+    value:
+      - name: "global-router"
+        provider: "file"
+        status: "enabled"
+        rule: "Host(`example.com`)"
+        priority: 1
+        entryPoints: ["web", "websecure"]
+        middlewares: ["security-headers"]
+        service: ""
+        parentRefs: []
+        parents: []
+        children: ["api-router", "web-router"]
+        depth: 0
+        effectiveMiddlewares: ["security-headers"]
+        using: []
+        error: ""
+      
+      - name: "api-router"
+        provider: "file"
+        status: "enabled"
+        rule: "PathPrefix(`/api`)"
+        priority: 10
+        entryPoints: ["web", "websecure"]
+        middlewares: ["api-auth"]
+        service: "api-service"
+        parentRefs: ["global-router"]
+        parents: ["global-router"]
+        children: ["admin-router"]
+        depth: 1
+        effectiveMiddlewares: ["security-headers", "api-auth"]
+        using: ["api-service"]
+        error: ""
+  
+  RouterDetailResponse:
+    value:
+      name: "admin-router"
+      provider: "file"
+      status: "enabled"
+      rule: "Path(`/api/admin`)"
+      priority: 100
+      entryPoints: ["websecure"]
+      middlewares: ["admin-auth"]
+      service: "admin-service"
+      parentRefs: ["api-router"]
+      parents: ["api-router"]
+      children: []
+      depth: 2
+      effectiveMiddlewares: ["security-headers", "api-auth", "admin-auth"]
+      using: ["admin-service"]
+      error: ""
+  
+  ErrorResponse:
+    value:
+      name: "broken-router"
+      provider: "file"
+      status: "warning"
+      rule: "Path(`/broken`)"
+      priority: 1
+      entryPoints: ["web"]
+      middlewares: []
+      service: "broken-service"
+      parentRefs: ["non-existent"]
+      parents: []
+      children: []
+      depth: 0
+      effectiveMiddlewares: []
+      using: []
+      error: "RouterParentNotFound: Parent router 'non-existent' not found"
