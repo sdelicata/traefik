@@ -1,130 +1,167 @@
 package service
 
 import (
-	"bufio"
 	"context"
-	"fmt"
+	"errors"
 	"io"
-	"net"
 	"net/http"
 	"sync"
+	"time"
 )
 
-// connectHandler defers the payload of a CONNECT request until the backend has accepted the tunnel.
+var (
+	errTunnelRefused         = errors.New("the backend refused the CONNECT tunnel")
+	errResponseHeaderTimeout = responseHeaderTimeoutError{}
+)
+
+// responseHeaderTimeoutError is returned when the backend did not send the CONNECT response headers in time.
+// It implements net.Error so that the proxy error handler reports a Gateway Timeout.
+type responseHeaderTimeoutError struct{}
+
+func (responseHeaderTimeoutError) Error() string {
+	return "timeout awaiting the CONNECT response headers"
+}
+
+func (responseHeaderTimeoutError) Timeout() bool { return true }
+
+func (responseHeaderTimeoutError) Temporary() bool { return true }
+
+// connectHandler rejects the CONNECT requests coming from a client that cannot tunnel.
 type connectHandler struct {
 	next http.Handler
 }
 
-// newConnectHandler wraps next with the CONNECT payload deferral behavior.
+// newConnectHandler wraps next to reject the CONNECT requests that cannot be tunneled.
 func newConnectHandler(next http.Handler) http.Handler {
 	return &connectHandler{next: next}
 }
 
 func (h *connectHandler) ServeHTTP(rw http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodConnect {
-		h.next.ServeHTTP(rw, req)
-		return
-	}
-
 	// Tunneling is only supported for clients speaking HTTP/2 and above.
-	if req.ProtoMajor == 1 {
+	if req.Method == http.MethodConnect && req.ProtoMajor == 1 {
 		rw.WriteHeader(http.StatusNotImplemented)
+
 		return
 	}
 
-	// Nothing to defer for a CONNECT without body or with a fixed Content-Length.
-	if req.ContentLength >= 0 || req.Body == nil || req.Body == http.NoBody {
-		h.next.ServeHTTP(rw, req)
-		return
-	}
-
-	bodyDeferrer := newBodyDeferrer(req.Context().Done(), req.Body)
-	req.Body = bodyDeferrer
-
-	h.next.ServeHTTP(&connectResponseWriter{ResponseWriter: rw, bodyDeferrer: bodyDeferrer}, req)
+	h.next.ServeHTTP(rw, req)
 }
 
-// bodyDeferrer holds the body of a CONNECT request until the backend has accepted the tunnel.
+// connectRoundTripper defers the payload of a CONNECT request until the backend has accepted the tunnel.
+// As described in https://datatracker.ietf.org/doc/html/rfc9931#name-requirements-for-http-conne we must wait for a
+// 2xx (Successful) response before forwarding any tunnel data.
+//
+// The wait is bounded by the response header timeout, as the transport cannot arm its own on a CONNECT request:
+// it is armed once the request body has been fully written, and the body of a tunnel is the uplink,
+// which never ends before the response.
+type connectRoundTripper struct {
+	next                  http.RoundTripper
+	responseHeaderTimeout time.Duration
+}
+
+// newConnectRoundTripper wraps next with the CONNECT payload deferral behavior.
+// A responseHeaderTimeout of zero, the default, leaves the deferral unbounded.
+func newConnectRoundTripper(next http.RoundTripper, responseHeaderTimeout time.Duration) http.RoundTripper {
+	return &connectRoundTripper{next: next, responseHeaderTimeout: responseHeaderTimeout}
+}
+
+func (c *connectRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Nothing to defer for a request that is not a CONNECT, or for a CONNECT without body or with a fixed Content-Length.
+	if req.Method != http.MethodConnect || req.ContentLength >= 0 || req.Body == nil || req.Body == http.NoBody {
+		return c.next.RoundTrip(req)
+	}
+
+	deferrer := newBodyDeferrer(req.Context().Done(), req.Body, c.responseHeaderTimeout)
+
+	outReq := *req
+	outReq.Body = deferrer
+
+	res, err := c.next.RoundTrip(&outReq)
+	if err != nil {
+		deferrer.discard()
+
+		return nil, err
+	}
+
+	// The tunnel was refused, so the payload never becomes tunnel data and must not reach the backend.
+	if res.StatusCode/100 != 2 {
+		deferrer.discard()
+
+		return res, nil
+	}
+
+	deferrer.release()
+
+	return res, nil
+}
+
+// bodyDeferrer holds the payload of a CONNECT request until the backend has accepted the tunnel.
 type bodyDeferrer struct {
-	body             io.ReadCloser
-	doneCh           <-chan struct{}
-	releaseCh        chan struct{}
-	closeReleaseOnce func()
+	body      io.ReadCloser
+	doneCh    <-chan struct{}
+	timeoutCh <-chan time.Time
+
+	releaseCh   chan struct{}
+	releaseOnce func()
+	discardCh   chan struct{}
+	discardOnce func()
 }
 
-func newBodyDeferrer(doneCh <-chan struct{}, body io.ReadCloser) *bodyDeferrer {
+func newBodyDeferrer(doneCh <-chan struct{}, body io.ReadCloser, responseHeaderTimeout time.Duration) *bodyDeferrer {
+	// A nil channel blocks forever, which is the unbounded deferral.
+	var timeoutCh <-chan time.Time
+	if responseHeaderTimeout > 0 {
+		timeoutCh = time.After(responseHeaderTimeout)
+	}
+
 	releaseCh := make(chan struct{})
+	discardCh := make(chan struct{})
 
 	return &bodyDeferrer{
-		body:      body,
-		doneCh:    doneCh,
-		releaseCh: releaseCh,
-		closeReleaseOnce: sync.OnceFunc(func() {
-			close(releaseCh)
-		}),
+		body:        body,
+		doneCh:      doneCh,
+		timeoutCh:   timeoutCh,
+		releaseCh:   releaseCh,
+		releaseOnce: sync.OnceFunc(func() { close(releaseCh) }),
+		discardCh:   discardCh,
+		discardOnce: sync.OnceFunc(func() { close(discardCh) }),
 	}
 }
 
 func (bd *bodyDeferrer) Read(p []byte) (n int, err error) {
+	// Once the tunnel is established the deferral is over, and its bound must not outlive it.
 	select {
 	case <-bd.releaseCh:
-		// already released
+		return bd.body.Read(p)
 	default:
-		select {
-		case <-bd.doneCh:
-			return 0, context.Canceled
-		case <-bd.releaseCh:
-		}
 	}
-	return bd.body.Read(p)
+
+	select {
+	case <-bd.releaseCh:
+		return bd.body.Read(p)
+	case <-bd.discardCh:
+		return 0, errTunnelRefused
+	case <-bd.doneCh:
+		return 0, context.Canceled
+	case <-bd.timeoutCh:
+		return 0, errResponseHeaderTimeout
+	}
 }
 
-// Close closes the underlying request body before releasing the deferred request body read operation.
+// Close discards the deferred payload, if it has not been forwarded yet, and closes the underlying request body.
 func (bd *bodyDeferrer) Close() error {
-	defer bd.closeReleaseOnce()
+	bd.discardOnce()
+
 	return bd.body.Close()
 }
 
-// Release forwards the deferred request body to the backend and copy the subsequent bytes to the tunnel.
-// As described in https://datatracker.ietf.org/doc/html/rfc9931#name-requirements-for-http-conne we must wait for a 2xx (Successful)
-// response before forwarding any tunnel data.
-func (bd *bodyDeferrer) Release() {
-	bd.closeReleaseOnce()
+// release forwards the deferred payload to the backend, and copies the subsequent bytes to the tunnel.
+func (bd *bodyDeferrer) release() {
+	bd.releaseOnce()
 }
 
-// connectResponseWriter releases the deferred CONNECT payload as soon as the backend's response status is known,
-// then behaves as the wrapped ResponseWriter.
-type connectResponseWriter struct {
-	http.ResponseWriter
-
-	bodyDeferrer *bodyDeferrer
-}
-
-func (w *connectResponseWriter) WriteHeader(statusCode int) {
-	// The tunnel was refused, so the request body never becomes tunnel data and must not reach the backend.
-	if statusCode/100 != 2 {
-		_ = w.bodyDeferrer.Close()
-	} else {
-		w.bodyDeferrer.Release()
-	}
-
-	w.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (w *connectResponseWriter) Flush() {
-	if f, ok := w.ResponseWriter.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-func (w *connectResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	if hijacker, ok := w.ResponseWriter.(http.Hijacker); ok {
-		return hijacker.Hijack()
-	}
-
-	return nil, nil, fmt.Errorf("not a hijacker: %T", w.ResponseWriter)
-}
-
-func (w *connectResponseWriter) Unwrap() http.ResponseWriter {
-	return w.ResponseWriter
+// discard makes sure the deferred payload never reaches the backend.
+// Closing the underlying body is not enough, as the reverse proxy makes the closure of its request body a no-op.
+func (bd *bodyDeferrer) discard() {
+	bd.discardOnce()
 }

@@ -65,7 +65,7 @@ func (r *RoundTripperManager) Update(newConfigs map[string]*dynamic.ServersTrans
 		r.roundTrippers[configName], err = createRoundTripper(newConfig)
 		if err != nil {
 			log.WithoutContext().Errorf("Could not configure HTTP Transport %s, fallback on default transport: %v", configName, err)
-			r.roundTrippers[configName] = http.DefaultTransport
+			r.roundTrippers[configName] = newConnectRoundTripper(http.DefaultTransport, 0)
 		}
 	}
 
@@ -78,7 +78,7 @@ func (r *RoundTripperManager) Update(newConfigs map[string]*dynamic.ServersTrans
 		r.roundTrippers[newConfigName], err = createRoundTripper(newConfig)
 		if err != nil {
 			log.WithoutContext().Errorf("Could not configure HTTP Transport %s, fallback on default transport: %v", newConfigName, err)
-			r.roundTrippers[newConfigName] = http.DefaultTransport
+			r.roundTrippers[newConfigName] = newConnectRoundTripper(http.DefaultTransport, 0)
 		}
 	}
 
@@ -130,8 +130,11 @@ func createRoundTripper(cfg *dynamic.ServersTransport) (http.RoundTripper, error
 		WriteBufferSize:       64 * 1024,
 	}
 
+	var responseHeaderTimeout time.Duration
 	if cfg.ForwardingTimeouts != nil {
-		transport.ResponseHeaderTimeout = time.Duration(cfg.ForwardingTimeouts.ResponseHeaderTimeout)
+		responseHeaderTimeout = time.Duration(cfg.ForwardingTimeouts.ResponseHeaderTimeout)
+
+		transport.ResponseHeaderTimeout = responseHeaderTimeout
 		transport.IdleConnTimeout = time.Duration(cfg.ForwardingTimeouts.IdleConnTimeout)
 	}
 
@@ -152,24 +155,24 @@ func createRoundTripper(cfg *dynamic.ServersTransport) (http.RoundTripper, error
 
 	// Return directly HTTP/1.1 transport when HTTP/2 is disabled
 	if cfg.DisableHTTP2 {
-		return &KerberosRoundTripper{
+		return newConnectRoundTripper(&KerberosRoundTripper{
 			OriginalRoundTripper: transport,
 			new: func() http.RoundTripper {
 				return transport.Clone()
 			},
-		}, nil
+		}, responseHeaderTimeout), nil
 	}
 
 	rt, err := newSmartRoundTripper(transport, cfg.ForwardingTimeouts)
 	if err != nil {
 		return nil, err
 	}
-	return &KerberosRoundTripper{
+	return newConnectRoundTripper(&KerberosRoundTripper{
 		OriginalRoundTripper: rt,
 		new: func() http.RoundTripper {
 			return rt.Clone()
 		},
-	}, nil
+	}, responseHeaderTimeout), nil
 }
 
 type KerberosRoundTripper struct {
